@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys, os, json, cv2, time
+from nanoid import generate
 from pytube import YouTube
 import yt_dlp
 
@@ -2228,13 +2229,48 @@ class MainWindow(QMainWindow):
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(self.songs[idx], f, indent=2)
 
+    def get_styled_input(self, title, label):
+        """Show a styled input dialog and return (text, ok)"""
+        text, ok = QInputDialog.getText(self, title, label)
+        return text, ok
+        
     def add_song(self):
-        title, ok = self.get_styled_input('New Song', 'Enter the song title:')
-        if ok and title:
-            data = {'title': title, 'lyrics': []}
-            with open(os.path.join(LYRICS_DIR, f"{title}.json"), 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
-            self.load_songs()
+        result = self.get_styled_input('New Song', 'Enter the song title:')
+        if result is not None:
+            title, ok = result
+            if ok and title:
+                # Ensure title is a valid filename
+                safe_title = "".join(c for c in title if c.isalnum() or c in " -_")
+                safe_title = safe_title.strip()
+                
+                if not safe_title:
+                    QMessageBox.warning(self, "Invalid Title", "The song title cannot be empty.")
+                    return
+                    
+                # Check if song already exists
+                song_path = os.path.join(LYRICS_DIR, f"{safe_title}.json")
+                if os.path.exists(song_path):
+                    QMessageBox.warning(self, "Song Exists", f"A song with the title '{safe_title}' already exists.")
+                    return
+                
+                # Create new song data with a default empty lyric
+                data = {
+                    'title': title,
+                    'lyrics': []
+                }
+                
+                # Save the new song
+                try:
+                    with open(song_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2)
+                    
+                    # Reload songs and select the new one
+                    self.load_songs()
+                    index = self.song_select.findText(title)
+                    if index >= 0:
+                        self.song_select.setCurrentIndex(index)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to create song: {str(e)}")
 
     def get_video_thumbnail(self, video_path):
         """Generate a thumbnail from the first frame of the video"""
