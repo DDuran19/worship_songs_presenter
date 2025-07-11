@@ -535,7 +535,7 @@ class SplashScreen(QWidget):
         self.logo_label.setAlignment(Qt.AlignCenter)
         
         # Load and scale logo
-        pixmap = QPixmap("JSGC_logo.png")
+        pixmap = QPixmap("config/app_logo.png")
         if not pixmap.isNull():
             # Scale logo to fit in the square (with some padding)
             target_size = self.size - 100  # Leave some padding
@@ -613,7 +613,7 @@ class MainWindow(QMainWindow):
 
         # Set window title and icon
         self.setWindowTitle("JSGC Lingunan Worship Team Presenter")
-        self.setWindowIcon(QIcon("JSGC_logo.png"))
+        self.setWindowIcon(QIcon("config/app_logo.png"))
         
         # Enable window frame
         self.setWindowFlags(Qt.Window)
