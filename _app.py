@@ -10,9 +10,10 @@ from PyQt5.QtWidgets import (
     QDialog, QFormLayout, QSpinBox, QDoubleSpinBox,
     QLineEdit, QColorDialog, QDialogButtonBox, QCheckBox,
     QInputDialog, QProgressBar, QMessageBox, QTextEdit, QSizePolicy,
-    QAbstractItemView
+    QAbstractItemView, QGraphicsOpacityEffect
 )
-from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, pyqtSignal, pyqtSlot, QEasingCurve, QSize
+from PyQt5.QtCore import (Qt, QTimer, QPropertyAnimation, 
+    pyqtSignal, pyqtSlot, QEasingCurve, QSize, QSequentialAnimationGroup)
 from PyQt5.QtGui import QColor, QImage, QPixmap, QIcon
 
 # === Config paths ===
@@ -240,17 +241,26 @@ class SettingsDialog(QDialog):
         main_layout.addStretch(1)
         
         # Add button box
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         
         # Style the buttons
-        ok_button = button_box.button(QDialogButtonBox.Ok)
+        ok_button = self.button_box.button(QDialogButtonBox.Ok)
         ok_button.setMinimumWidth(100)
-        cancel_button = button_box.button(QDialogButtonBox.Cancel)
-        cancel_button.setMinimumWidth(100)
+        ok_button.setAutoDefault(False)  # Prevent sound on click
+        ok_button.setDefault(False)      # Prevent sound on Enter key
+        ok_button.clicked.connect(self.accept)  # Connect directly to accept
         
-        main_layout.addWidget(button_box, alignment=Qt.AlignRight)
+        cancel_button = self.button_box.button(QDialogButtonBox.Cancel)
+        cancel_button.setMinimumWidth(100)
+        cancel_button.setAutoDefault(False)  # Prevent sound on click
+        cancel_button.setDefault(False)      # Prevent sound on Enter key
+        cancel_button.clicked.connect(self.reject)  # Connect directly to reject
+        
+        # Connect the accepted signal to accept()
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        
+        main_layout.addWidget(self.button_box, alignment=Qt.AlignRight)
     
     def choose_color(self):
         color = QColorDialog.getColor(QColor(self.color_edit.text()), self, "Select Text Color")
@@ -406,12 +416,48 @@ class PresenterWindow(QWidget):
         fps = self.cap.get(cv2.CAP_PROP_FPS) or 25
         self.timer.start(int(1000/fps))
     def set_lyric(self, text):
-        anim = QPropertyAnimation(self.overlay, b"windowOpacity", self)
-        anim.setDuration(int(self.defaults['fade_duration']*1000))
-        anim.setStartValue(0)
-        anim.setEndValue(1)
-        self.overlay.setText(text)
-        anim.start()
+        # 1) Ensure we have one shared opacity effect
+        if not hasattr(self, "_opacity_effect"):
+            eff = QGraphicsOpacityEffect(self.overlay)
+            self.overlay.setGraphicsEffect(eff)
+            self._opacity_effect = eff
+        else:
+            eff = self._opacity_effect
+
+        # 2) Stop any running animation
+        if hasattr(self, "_current_anim"):
+            self._current_anim.stop()
+            del self._current_anim
+
+        fade_duration = int(self.defaults['fade_duration'] * 1000)
+
+        # 3) Fade-out current text
+        fade_out = QPropertyAnimation(eff, b"opacity", self)
+        fade_out.setDuration(fade_duration)
+        fade_out.setStartValue(eff.opacity())  # from whatever level it is now
+        fade_out.setEndValue(0.0)
+        fade_out.setEasingCurve(QEasingCurve.InOutQuad)
+
+        # 4) Once faded out, swap text and fade in
+        def on_fade_out_finished():
+            # set the new lyric
+            self.overlay.setText(text)
+
+            fade_in = QPropertyAnimation(eff, b"opacity", self)
+            fade_in.setDuration(fade_duration)
+            fade_in.setStartValue(0.0)
+            fade_in.setEndValue(1.0)
+            fade_in.setEasingCurve(QEasingCurve.InOutQuad)
+            fade_in.start()
+
+            # keep reference alive
+            self._current_anim = fade_in
+
+        fade_out.finished.connect(on_fade_out_finished)
+
+        # 5) start fade-out
+        fade_out.start()
+        self._current_anim = fade_out
     def resizeEvent(self, ev):
         self.main_widget.resize(self.size())
         r = self.rect()
@@ -1223,13 +1269,34 @@ class MainWindow(QMainWindow):
              self.on_video(0)
 
     def open_settings(self):
-        dlg = SettingsDialog(self, load_defaults())
-        if dlg.exec_() == QDialogButtonBox.Ok:
-            vals = dlg.get_values()
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(vals, f, indent=2)
-            self.presenter.defaults = vals
-            self.presenter.apply_style()
+        # Load current settings for the dialog
+        current_settings = load_defaults()
+        dlg = SettingsDialog(self, current_settings)
+        
+        # Show the dialog and wait for it to close
+        result = dlg.exec_()
+        
+        # Check if OK was clicked
+        if result == QDialog.Accepted:
+            try:
+                # Get the new values from the dialog
+                new_settings = dlg.get_values()
+                
+                # Save to config file
+                with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(new_settings, f, indent=2)
+                
+                # Update the presenter with new settings
+                self.presenter.defaults = new_settings
+                self.presenter.apply_style()
+                
+                return True
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save settings: {str(e)}")
+                print(f"Error saving settings: {e}")
+                return False
+        return False
 
     def load_settings(self):
         """Load application settings from config file."""
