@@ -13,12 +13,12 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 # Import PyQt after setting up paths
-from PyQt5.QtWidgets import QApplication, QMessageBox, QSplashScreen
-from PyQt5.QtCore import Qt, QCoreApplication, QTimer
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtWidgets import QApplication, QMessageBox, QSplashScreen, QStyle
+from PyQt5.QtCore import Qt, QCoreApplication, QTimer, QPropertyAnimation
+from PyQt5.QtGui import QPixmap, QIcon
 
-# Import MainWindow from _app.py
-from _app import MainWindow, SplashScreen
+from app.ui.windows.main_window import MainWindow
+from app.ui.windows.splash_screen import SplashScreen
 
 def setup_logging():
     """Configure application logging."""
@@ -86,7 +86,7 @@ def handle_exception(exc_type, exc_value, exc_traceback):
 def main():
     """Main application entry point."""
     # Set up logging
-    setup_logging()
+    log_file = setup_logging()
     
     # Create the application
     app = QApplication(sys.argv)
@@ -99,47 +99,34 @@ def main():
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("Worship Team")
     
-    # Create and show the splash screen
-    splash = SplashScreen()
-    splash.show()
-    
-    # Process events to make sure the splash screen is shown
-    app.processEvents()
-    
     try:
-        # Create the main window
-        window = MainWindow()
+        # Create and show the main window with splash screen
+        main_window = MainWindow(show_splash=True)
         
-        # Ensure get_styled_input always returns a tuple (text, ok)
-        original_get_styled_input = window.get_styled_input
+        # Fade in the main window if it was hidden
+        if main_window.windowOpacity() < 1.0:
+            fade_in = QPropertyAnimation(main_window, b"windowOpacity")
+            fade_in.setDuration(300)
+            fade_in.setStartValue(0.0)
+            fade_in.setEndValue(1.0)
+            fade_in.start()
         
-        def safe_get_styled_input(*args, **kwargs):
-            result = original_get_styled_input(*args, **kwargs)
-            if result is None:
-                return "", False
-            if isinstance(result, tuple) and len(result) == 2:
-                return result
-            return "", False
+        # Show the main window
+        main_window.show()
+        
+        # Enter the application event loop
+        result = app.exec_()
+        
+        # Clean up resources
+        if hasattr(main_window, 'cleanup'):
+            main_window.cleanup()
             
-        window.get_styled_input = safe_get_styled_input
-        
-        # Close the splash screen and show the main window
-        splash.close_splash()
-        window.show()
-        
-        # Start the event loop
-        sys.exit(app.exec_())
+        return result
         
     except Exception as e:
-        # Log any errors that occur during startup
-        logging.critical("Application failed to start", exc_info=True)
-        QMessageBox.critical(
-            None,
-            "Startup Error",
-            f"The application failed to start due to an error:\n{str(e)}\n\n"
-            "Please check the logs for more information."
-        )
-        sys.exit(1)
+        logging.error(f"Error starting application: {e}", exc_info=True)
+        QMessageBox.critical(None, "Error", f"Failed to start application: {str(e)}")
+        return 1
 
 if __name__ == '__main__':
     main()

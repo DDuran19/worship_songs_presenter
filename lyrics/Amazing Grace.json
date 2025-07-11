@@ -3,19 +3,28 @@
   "lyrics": [
     {
       "text": "Amazing grace! How sweet the sound",
-      "section": "Verse 1"
+      "section": "Verse 1",
+      "id": "Ve7bBHcLt8rhu8_NDhU5y"
     },
     {
       "text": "That saved a wretch like me.",
-      "section": "Verse 1"
+      "section": "Verse 1",
+      "id": "lKR1kjh3arioNj8DCvHR7"
     },
     {
       "text": "I once was lost",
-      "section": "Verse 1"
+      "section": "Verse 1",
+      "id": "5HrtwTbG8ZFmdVFI338a6"
     },
     {
       "text": "but now Im found",
-      "section": "Verse 1"
+      "section": "Verse 1",
+      "id": "imR2GlNd3X5_twRRge6WF"
+    },
+    {
+      "text": "My chains are gone\nI've been set free",
+      "section": "Chorus",
+      "id": "7lOG5xW9fVNMDHgUvQg-X"
     }
   ]
 }

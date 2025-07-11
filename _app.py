@@ -9,7 +9,8 @@ from PyQt5.QtWidgets import (
     QLabel, QComboBox, QMenu, QStyle,QGraphicsDropShadowEffect,
     QDialog, QFormLayout, QSpinBox, QDoubleSpinBox,
     QLineEdit, QColorDialog, QDialogButtonBox, QCheckBox,
-    QInputDialog, QProgressBar, QMessageBox, QTextEdit, QSizePolicy
+    QInputDialog, QProgressBar, QMessageBox, QTextEdit, QSizePolicy,
+    QAbstractItemView
 )
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, pyqtSignal, pyqtSlot, QEasingCurve, QSize
 from PyQt5.QtGui import QColor, QImage, QPixmap, QIcon
@@ -846,6 +847,13 @@ class MainWindow(QMainWindow):
         self.lyric_list = QListWidget()
         self.lyric_list.setObjectName("lyricList")
         self.lyric_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.lyric_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self.lyric_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.lyric_list.setDragEnabled(True)
+        self.lyric_list.viewport().setAcceptDrops(True)
+        self.lyric_list.setDropIndicatorShown(True)
+        self.lyric_list.setDefaultDropAction(Qt.MoveAction)
+        self.lyric_list.model().rowsMoved.connect(self.on_lyrics_reordered)
         self.lyric_list.customContextMenuRequested.connect(self.show_context_menu)
         self.lyric_list.setStyleSheet("""
             QListWidget#lyricList {
@@ -1255,11 +1263,17 @@ class MainWindow(QMainWindow):
             print(f"Error saving settings: {e}")
     
     def load_songs(self):
+        from nanoid import generate
         self.songs = []
         for fn in os.listdir(LYRICS_DIR):
             if fn.endswith('.json'):
                 with open(os.path.join(LYRICS_DIR, fn), encoding='utf-8') as f:
-                    self.songs.append(json.load(f))
+                    song = json.load(f)
+                    # Ensure all lyrics have IDs
+                    for lyric in song.get('lyrics', []):
+                        if 'id' not in lyric:
+                            lyric['id'] = generate()
+                    self.songs.append(song)
         self.songs.sort(key=lambda s: s['title'])
         self.song_select.clear()
         self.song_select.addItems([s['title'] for s in self.songs])
@@ -1393,8 +1407,13 @@ class MainWindow(QMainWindow):
             
             self.lyric_list.itemDoubleClicked.connect(on_double_clicked)
         
-        # Connect double-click signal after adding all items
+        # Connect signals
         self.lyric_list.itemDoubleClicked.connect(self.on_lyric_double_clicked)
+        self.lyric_list.itemsReordered.connect(self.on_lyrics_reordered)
+        
+        # Store the current song index and section filter for later use
+        self._current_song_index = idx
+        self._current_section_filter = section_filter
         
         # Update presenter with song title if not filtering by section
         if section_filter is None:
@@ -1579,6 +1598,8 @@ class MainWindow(QMainWindow):
                 return text_edit.toPlainText().strip(), True
 
     def new_slide(self, song_idx, section=''):
+        from nanoid import generate
+        
         if song_idx == -1:
             return ''
             
@@ -1730,8 +1751,9 @@ class MainWindow(QMainWindow):
             text = lyric_input.toPlainText().strip()
             if text:
                 self.songs[song_idx]['lyrics'].append({
+                    'id': generate(),
                     'text': text,
-                    'section': section if section else None
+                    'section': section if section else ''
                 })
                 self.save_song(song_idx)
                 
@@ -1753,6 +1775,8 @@ class MainWindow(QMainWindow):
         return section
         
     def edit_slide(self, song_idx, idx):
+        from nanoid import generate
+        
         if song_idx == -1 or idx < 0 or idx >= len(self.songs[song_idx]['lyrics']):
             return
             
@@ -1924,9 +1948,12 @@ class MainWindow(QMainWindow):
             new_section = section_combo.currentText().strip()
             
             if new_text:  # Only update if there's text
+                # Keep the existing ID or generate a new one if missing
+                lyric_id = self.songs[song_idx]['lyrics'][lyric_idx].get('id', generate())
                 self.songs[song_idx]['lyrics'][lyric_idx] = {
+                    'id': lyric_id,
                     'text': new_text,
-                    'section': new_section if new_section else None
+                    'section': new_section if new_section else ''
                 }
                 self.save_song(song_idx)
                 
@@ -2050,6 +2077,14 @@ class MainWindow(QMainWindow):
             else:
                 item.setBackground(QColor(255, 255, 255))
         
+        # Enable drag and drop for the list
+        self.lyric_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self.lyric_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.lyric_list.setDragEnabled(True)
+        self.lyric_list.viewport().setAcceptDrops(True)
+        self.lyric_list.setDropIndicatorShown(True)
+        self.lyric_list.setDefaultDropAction(Qt.MoveAction)
+        
         # Connect the double click handler for the lyric item
         def on_double_clicked(item):
             data = item.data(Qt.UserRole)
@@ -2058,10 +2093,68 @@ class MainWindow(QMainWindow):
         
         self.lyric_list.itemDoubleClicked.connect(on_double_clicked)
         
+        # Connect the item moved signal
+        self.lyric_list.model().rowsMoved.connect(self.on_lyrics_reordered)
+        
         # Update presenter with song title if not filtering by section
         if section_filter is None:
             self.presenter.set_lyric(song['title'])
     
+    def on_lyrics_reordered(self, parent, start, end, destination, row):
+        """Handle when lyrics are reordered via drag and drop"""
+        from nanoid import generate
+        
+        # Get the current song index
+        song_idx = self.song_select.currentIndex()
+        if song_idx == -1:
+            return
+            
+        # Get the current section filter
+        section_filter = getattr(self, '_current_section_filter', None)
+        
+        # Get the song data
+        song = self.songs[song_idx]
+        
+        # Create a mapping of lyric text to lyric data (for quick lookup)
+        lyrics_map = {lyric['id']: lyric for lyric in song['lyrics']}
+        
+        # Process the current order from the list widget
+        reordered_lyrics = []
+        current_section = None
+        
+        for i in range(self.lyric_list.count()):
+            item = self.lyric_list.item(i)
+            if not item:
+                continue
+                
+            # Check if this is a section header
+            widget = self.lyric_list.itemWidget(item)
+            if widget and isinstance(widget, QLabel):
+                # Extract section name from the label text (remove HTML tags)
+                section_text = widget.text()
+                current_section = section_text.replace('<b>', '').replace('</b>', '').strip()
+                if current_section == 'No Section':
+                    current_section = ''
+                continue
+                
+            # This is a lyric item
+            data = item.data(Qt.UserRole)
+            if isinstance(data, dict) and 'id' in data:
+                lyric_id = data['id']
+                if lyric_id in lyrics_map:
+                    # Update the section if it's in a new section
+                    lyrics_map[lyric_id]['section'] = current_section or ''
+                    reordered_lyrics.append(lyrics_map[lyric_id])
+        
+        # Update the song's lyrics with the reordered list
+        song['lyrics'] = reordered_lyrics
+        
+        # Save the changes
+        self.save_song(song_idx)
+        
+        # Refresh the UI to show the updated sections
+        self.on_song(song_idx, section_filter)
+        
     def save_song(self, idx):
         title = self.songs[idx]['title']
         path = os.path.join(LYRICS_DIR, f"{title}.json")

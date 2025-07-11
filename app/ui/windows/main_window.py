@@ -7,7 +7,7 @@ from pathlib import Path
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, QTimer, QUrl
 
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QListWidgetItem, QLabel, QMenu, QMessageBox, QStyle, QFileDialog
 )
 from PyQt5.QtGui import QIcon, QPixmap, QColor, QTextCursor
@@ -32,13 +32,25 @@ CONFIG_FILE = CONFIG_DIR / "settings.json"
 class MainWindow(QMainWindow):
     """Main application window for Worship Songs Presenter."""
     def __init__(self, show_splash=True):
-        # Initialize QMainWindow first
         super().__init__()
-        logging.info("Initializing MainWindow...")
+
+        # Show splash screen if enabled
+        if show_splash:
+            self.splash = SplashScreen()
+            self.splash.show()
+            QApplication.processEvents()
+            # Don't show main window until splash is done
+            self.setWindowOpacity(0.0)
+        else:
+            self.splash = None
+            QApplication.processEvents()
+            if hasattr(self, 'splash') and self.splash:
+                self.splash.set_status("Initializing application...")
+
+        # Set window title and icon
+        self.setWindowTitle("Worship Songs Presenter")
         
         # Initialize instance variables
-        self.show_splash = show_splash
-        self.splash = None
         self.presenter = None
         self.defaults = {}
         self._initialized = False
@@ -1094,9 +1106,21 @@ class Worker(QThread):
         self.top_bar = TopBar()
         content_layout.addWidget(self.top_bar)
         
-        # Lyrics list
+        # Create scroll area for lyrics list
+        print("Creating scroll area for lyrics list...")
+        self.lyrics_scroll = QScrollArea()
+        self.lyrics_scroll.setWidgetResizable(True)
+        self.lyrics_scroll.setFrameShape(QFrame.NoFrame)
+        
+        # Create the lyrics list
+        print("Creating LyricsList widget...")
         self.lyrics_list = LyricsList()
-        content_layout.addWidget(self.lyrics_list, 1)
+        print("LyricsList widget created, adding to scroll area...")
+        self.lyrics_scroll.setWidget(self.lyrics_list)
+        print("LyricsList widget added to scroll area")
+        
+        # Add scroll area to layout
+        content_layout.addWidget(self.lyrics_scroll)
         
         # Video controls
         self.video_controls = VideoControls()
@@ -1358,7 +1382,9 @@ class Worker(QThread):
 
     def on_song(self, idx, section_filter=None):
         """Handle song selection and display lyrics with section filtering."""
+        print(f"\n=== on_song called with idx={idx}, section_filter={section_filter} ===")
         if idx == -1:
+            print("No song selected, clearing lyrics list")
             self.lyrics_list.clear()
             return
             
@@ -1428,6 +1454,11 @@ class Worker(QThread):
         self.section_layout.addStretch(1)
         
         # Add lyrics to the list
+        print("\nClearing lyrics list before adding new items")
+        self.lyrics_list.clear()
+        
+        # Add lyrics to the list
+        print(f"Adding {len(song['lyrics'])} lyrics to the list")
         current_section = None
         for i, slide in enumerate(song['lyrics']):
             # Skip if section filter is active and doesn't match
@@ -1437,33 +1468,20 @@ class Worker(QThread):
             # Check if section changed
             if 'section' in slide and slide['section'] != current_section:
                 current_section = slide['section']
-                # Add section header
-                section_item = QListWidgetItem()
-                section_item.setFlags(Qt.NoItemFlags)
-                section_item.setSizeHint(QSize(0, 24))
-                
-                section_widget = QLabel(f"<b>{current_section or 'No Section'}</b>")
-                section_widget.setStyleSheet("""
-                    background-color: #f1f3f5;
-                    padding: 2px 8px;
-                    border-radius: 2px;
-                    margin: 1px 0;
-                    font-size: 12px;
-                """)
-                
-                self.lyrics_list.addItem(section_item)
-                self.lyrics_list.setItemWidget(section_item, section_widget)
+                # Add section header using the LyricsList widget's method
+                self.lyrics_list.add_item(
+                    text=current_section or 'No Section',
+                    data={'is_section_header': True, 'section': current_section},
+                    is_section_header=True
+                )
             
-            # Add the lyric item
-            item = QListWidgetItem(slide['text'])
-            item.setData(Qt.UserRole, slide)
-            self.lyrics_list.addItem(item)
-            
-            # Apply alternating background for sections
-            if i % 2 == 0:
-                item.setBackground(QColor(250, 250, 250))
-            else:
-                item.setBackground(QColor(255, 255, 255))
+            # Add the lyric item with its data
+            slide_data = slide.copy()
+            slide_data['original_index'] = i  # Store original index for reference
+            self.lyrics_list.add_item(
+                text=slide['text'],
+                data=slide_data
+            )
         
         # Connect the double click handler for the lyric item
         def on_double_clicked(item):
@@ -1473,9 +1491,113 @@ class Worker(QThread):
         
         self.lyrics_list.itemDoubleClicked.connect(on_double_clicked)
         
+        # Connect the reorder signal
+        try:
+            self.lyrics_list.itemsReordered.disconnect()
+        except:
+            pass
+        self.lyrics_list.itemsReordered.connect(lambda: self.on_lyrics_reordered(idx, section_filter))
+        
+        # Store current song index and section filter for reorder handling
+        self._current_song_index = idx
+        self._current_section_filter = section_filter
+        
         # Update presenter with song title if not filtering by section
         if section_filter is None:
             self.presenter.set_lyric(song['title'])
+            
+    def on_lyrics_reordered(self, song_idx, section_filter=None):
+        """Handle when lyrics are reordered via drag and drop"""
+        print("\non_lyrics_reordered called")
+        print(f"song_idx: {song_idx}, section_filter: {section_filter}")
+        
+        if song_idx == -1 or not hasattr(self, 'songs') or song_idx >= len(self.songs):
+            print("Invalid song index or songs list not available")
+            return
+            
+        song = self.songs[song_idx]
+        
+        # Get the current order of items from the list
+        print("Getting all items data from lyrics list")
+        items_data = self.lyrics_list.get_all_items_data()
+        print(f"Found {len(items_data)} items in the list")
+        
+        # Rebuild the lyrics list while maintaining the new order
+        new_lyrics = []
+        current_section = None
+        
+        # First, collect all section headers and their positions
+        print("Collecting section headers...")
+        section_positions = {}
+        for i, item in enumerate(items_data):
+            if item.get('is_section_header', False):
+                section_name = item.get('text', '').replace('<b>', '').replace('</b>', '').strip()
+                section_positions[i] = section_name
+                print(f"Found section header at position {i}: {section_name}")
+        print(f"Total section headers found: {len(section_positions)}")
+        
+        # Now process all items
+        print("\nProcessing items...")
+        for i, item in enumerate(items_data):
+            if item.get('is_section_header', False):
+                # This is a section header
+                current_section = item.get('text', '').replace('<b>', '').replace('</b>', '').strip()
+                print(f"Processing section header at {i}: {current_section}")
+            elif 'data' in item and isinstance(item['data'], dict):
+                print(f"Processing lyric item at {i}: {item.get('text', '')}")
+                # This is a lyric item
+                lyric_data = item['data'].copy()
+                
+                # Find the most recent section header before this item
+                current_section = None
+                for pos in sorted(section_positions.keys(), reverse=True):
+                    if pos < i:
+                        current_section = section_positions[pos]
+                        print(f"  - Found section '{current_section}' at position {pos}")
+                        break
+                
+                # Only update the section if it's different
+                old_section = lyric_data.get('section', 'None')
+                if 'section' not in lyric_data or lyric_data['section'] != current_section:
+                    print(f"  - Updating section from '{old_section}' to '{current_section}'")
+                    lyric_data['section'] = current_section
+                else:
+                    print(f"  - Keeping existing section: {current_section}")
+                
+                # Remove internal fields
+                lyric_data.pop('is_section_header', None)
+                lyric_data.pop('original_index', None)
+                
+                new_lyrics.append(lyric_data)
+        
+        # Update the song data with the new order
+        print(f"\nUpdating song data with {len(new_lyrics)} lyrics")
+        if new_lyrics:
+            # If we have a section filter, only update the lyrics in that section
+            if section_filter is not None:
+                print(f"Section filter active: {section_filter}")
+                # Get original lyrics and filter out the ones in the current section
+                original_lyrics = song['lyrics']
+                print(f"Original lyrics count: {len(original_lyrics)}")
+                filtered_lyrics = [lyric for lyric in original_lyrics 
+                                 if lyric.get('section') != section_filter]
+                print(f"Filtered lyrics count: {len(filtered_lyrics)}")
+                # Add the reordered lyrics from the current section
+                song['lyrics'] = filtered_lyrics + new_lyrics
+                print(f"New lyrics count after update: {len(song['lyrics'])}")
+            else:
+                # No section filter, update all lyrics
+                print("No section filter, updating all lyrics")
+                song['lyrics'] = new_lyrics
+            
+            # Save the changes
+            print("Saving changes to song...")
+            self.save_song(song_idx)
+            
+            # Refresh the view to show the updated order
+            print("Refreshing view...")
+            self.on_song(song_idx, section_filter)
+            print("View refreshed")
     
     def new_slide(self, song_idx, section=''):
         if song_idx == -1:

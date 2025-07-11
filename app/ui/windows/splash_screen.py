@@ -82,56 +82,51 @@ class SplashScreen(QWidget):
         self.layout.addWidget(self.status_label, stretch=0, alignment=Qt.AlignBottom)
 
     def _start_fade_in(self):
-        """Begin fade-in animation for the splash screen."""
+        """Start the fade-in animation."""
         self.setWindowOpacity(0.0)
-        self.fade_animation = QPropertyAnimation(self, b"windowOpacity", self)
-        self.fade_animation.setDuration(300)  # milliseconds
+        self.fade_animation = QPropertyAnimation(self, b"windowOpacity")
+        self.fade_animation.setDuration(300)
         self.fade_animation.setStartValue(0.0)
         self.fade_animation.setEndValue(1.0)
         self.fade_animation.start()
 
-    def set_status(self, text: str):
-        """
-        Update the status label text.
+    def set_status(self, text):
+        """Update the status message on the splash screen.
         
         Args:
-            text: The new status message to display.
+            text (str): The new status message to display
         """
         self.status_label.setText(text)
         QApplication.processEvents()
 
     def close_splash(self):
-        """
-        Fade out and close the splash screen, ensuring minimum display time.
-        """
-        elapsed = (time.time() - self.start_time) * 1000  # milliseconds
+        """Close the splash screen with a fade-out effect."""
+        # Calculate remaining time to meet minimum display duration
+        elapsed = (time.time() - self.start_time) * 1000  # Convert to milliseconds
         remaining = max(0, self.min_display_time - elapsed)
         
-        # Configure fade-out animation
-        self.fade_animation = QPropertyAnimation(self, b"windowOpacity", self)
-        self.fade_animation.setDuration(300)
-        self.fade_animation.setStartValue(1.0)
-        self.fade_animation.setEndValue(0.0)
-        self.fade_animation.finished.connect(self.close)
+        # Create fade out animation
+        fade_out = QPropertyAnimation(self, b"windowOpacity")
+        fade_out.setDuration(300)
+        fade_out.setStartValue(1.0)
+        fade_out.setEndValue(0.0)
+        fade_out.finished.connect(self.close)
         
-        # Start fade-out after the remaining delay
-        QTimer.singleShot(int(remaining), self.fade_animation.start)
+        # Start fade out after remaining time
+        QTimer.singleShot(int(remaining), fade_out.start)
 
     def close(self):
         """Close the splash screen with fade out effect."""
-        # Ensure minimum display time has elapsed
-        elapsed = (time.time() - self.start_time) * 1000  # Convert to ms
-        if elapsed < self.min_display_time:
-            QTimer.singleShot(self.min_display_time - int(elapsed), self.close)
-            return
-            
-        # Create fade out animation
-        self.fade_animation = QPropertyAnimation(self, b"windowOpacity")
-        self.fade_animation.setDuration(300)
-        self.fade_animation.setStartValue(1.0)
-        self.fade_animation.setEndValue(0.0)
-        self.fade_animation.finished.connect(super().close)
-        self.fade_animation.start()
+        # Create fade out animation if it doesn't exist
+        if not hasattr(self, 'fade_out_animation'):
+            self.fade_out_animation = QPropertyAnimation(self, b"windowOpacity")
+            self.fade_out_animation.setDuration(300)
+            self.fade_out_animation.setStartValue(1.0)
+            self.fade_out_animation.setEndValue(0.0)
+            self.fade_out_animation.finished.connect(super().close)
+        
+        # Start fade out
+        self.fade_out_animation.start()
 
     def finish(self, window):
         """
