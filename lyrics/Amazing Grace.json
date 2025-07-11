@@ -6,11 +6,16 @@
       "section": "Verse 1"
     },
     {
-      "text": "That saved a wretch like me."
+      "text": "That saved a wretch like me.",
+      "section": "Verse 1"
     },
     {
       "text": "I once was lost",
-      "section": "Chorus"
+      "section": "Verse 1"
+    },
+    {
+      "text": "but now Im found",
+      "section": "Verse 1"
     }
   ]
 }

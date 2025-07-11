@@ -1,0 +1,23 @@
+2025-07-11 23:36:45,195 - __main__ - INFO - Logging initialized
+2025-07-11 23:36:45,197 - __main__ - INFO - Log file: G:\worship\worship_songs_presenter\logs\app.log
+2025-07-11 23:36:45,197 - __main__ - INFO - Starting Worship Songs Presenter
+2025-07-11 23:36:45,487 - __main__ - INFO - Creating main window...
+2025-07-11 23:36:45,832 - root - CRITICAL - Fatal error in main:
+Traceback (most recent call last):
+  File "G:\worship\worship_songs_presenter\main.py", line 119, in main
+    splash.finish(window)
+    ^^^^^^^^^^^^^
+AttributeError: 'SplashScreen' object has no attribute 'finish'
+2025-07-11 23:42:34,433 - __main__ - INFO - Logging initialized
+2025-07-11 23:42:34,434 - __main__ - INFO - Log file: G:\worship\worship_songs_presenter\logs\app.log
+2025-07-11 23:42:34,434 - __main__ - INFO - Starting Worship Songs Presenter
+2025-07-11 23:42:34,728 - __main__ - INFO - Creating main window...
+2025-07-11 23:42:35,139 - __main__ - INFO - Starting application event loop
+2025-07-11 23:48:43,366 - root - CRITICAL - Uncaught exception:
+Traceback (most recent call last):
+  File "G:\worship\worship_songs_presenter\_app.py", line 2073, in add_song
+    title, ok = self.get_styled_input('New Song', 'Enter the song title:')
+    ^^^^^^^^^
+TypeError: cannot unpack non-iterable NoneType object
+2025-07-11 23:52:47,976 - __main__ - INFO - Logging initialized
+2025-07-11 23:52:47,977 - __main__ - INFO - Log file: G:\worship\worship_songs_presenter\logs\app.log

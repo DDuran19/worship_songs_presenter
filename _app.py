@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import sys, os, json, cv2, time
 from pytube import YouTube
-import youtube_dl
 import yt_dlp
 
 from PyQt5.QtWidgets import (

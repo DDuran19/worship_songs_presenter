@@ -1,0 +1,16 @@
+{
+    "app_name": "Worship Songs Presenter",
+    "version": "0.1.0",
+    "font_size": 48,
+    "font_color": "#ffffff",
+    "margins": [50, 0, 50, 0],
+    "italic": false,
+    "fade_duration": 0.5,
+    "default_video_urls": [
+        "https://www.youtube.com/watch?v=lvqsmF2ASY8",
+        "https://www.youtube.com/watch?v=JOmPR8RH56M",
+        "https://www.youtube.com/watch?v=dM14KHFTr6o",
+        "https://www.youtube.com/watch?v=e-pnt1s5KOY",
+        "https://www.youtube.com/watch?v=SaB-8ijjESs"
+    ]
+}
