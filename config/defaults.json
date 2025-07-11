@@ -7,5 +7,6 @@
     50,
     0
   ],
-  "italic": true
+  "italic": false,
+  "fade_duration": 0.4
 }

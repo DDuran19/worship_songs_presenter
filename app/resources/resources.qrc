@@ -1,7 +1,0 @@
-<RCC version="1.0">
-  <qresource prefix="/">
-
-    <file>icons/app_logo.png</file>
-    
-  </qresource>
-</RCC>
