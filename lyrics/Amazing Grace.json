@@ -2,13 +2,15 @@
   "title": "Amazing Grace",
   "lyrics": [
     {
-      "text": "Amazing grace! How sweet the sound"
+      "text": "Amazing grace! How sweet the sound",
+      "section": "Verse 1"
     },
     {
       "text": "That saved a wretch like me."
     },
     {
-      "text": "I once was lost"
+      "text": "I once was lost",
+      "section": "Chorus"
     }
   ]
 }

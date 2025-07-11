@@ -10,9 +10,9 @@ from PyQt5.QtWidgets import (
     QLabel, QComboBox, QMenu, QStyle,QGraphicsDropShadowEffect,
     QDialog, QFormLayout, QSpinBox, QDoubleSpinBox,
     QLineEdit, QColorDialog, QDialogButtonBox, QCheckBox,
-    QInputDialog, QProgressBar, QMessageBox, QTextEdit
+    QInputDialog, QProgressBar, QMessageBox, QTextEdit, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, pyqtSlot,QEasingCurve
+from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, pyqtSignal, pyqtSlot, QEasingCurve, QSize
 from PyQt5.QtGui import QColor, QImage, QPixmap, QIcon
 
 # === Config paths ===
@@ -269,12 +269,26 @@ class SettingsDialog(QDialog):
         }
 
 class PresenterWindow(QWidget):
+    # Custom signal for visibility changes
+    visibilityChanged = pyqtSignal(bool)
+    
     def __init__(self):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setWindowTitle("JSGC Lingunan Worship Team Presenter")
         self.resize(1000, 600)
         self.defaults = load_defaults()
         self.setAttribute(Qt.WA_TranslucentBackground)
+        
+        # Initialize video and overlay first
+        self.cap = None
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._next_frame)
+        
+        # Initialize window dragging attributes
+        self.draggable = True
+        self.dragging_threshold = 5
+        self.drag_start_position = None
+        self.is_maximized = False
         
         # Main widget with shadow effect
         self.main_widget = QWidget(self)
@@ -285,8 +299,6 @@ class PresenterWindow(QWidget):
                 border-radius: 0px;
             }
         """)
-        
-        # Remove window controls widget since we're using context menu now
         
         # Create context menu for window controls
         self.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -313,9 +325,22 @@ class PresenterWindow(QWidget):
         self.overlay.raise_()  # Make sure overlay is on top
         
         self.apply_style()
-        self.cap = None
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._next_frame)
+        
+    def showEvent(self, event):
+        """Override show event to emit visibility changed signal."""
+        super().showEvent(event)
+        self.visibilityChanged.emit(True)
+        
+    def hideEvent(self, event):
+        """Override hide event to emit visibility changed signal."""
+        super().hideEvent(event)
+        self.visibilityChanged.emit(False)
+        
+    def closeEvent(self, event):
+        """Override close event to emit visibility changed signal."""
+        if hasattr(self, 'visibilityChanged'):
+            self.visibilityChanged.emit(False)
+        super().closeEvent(event)
         
         # For window dragging
         self.draggable = True
@@ -646,14 +671,28 @@ class MainWindow(QMainWindow):
         main_widget_layout.setContentsMargins(10, 10, 10, 10)
         main_widget_layout.setSpacing(10)
         
+        # Create a container for the main content and video section
+        self.content_container = QWidget()
+        self.content_layout = QVBoxLayout(self.content_container)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(0)
+        
         # Main content area
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
+        self.content = QWidget()
+        self.content_layout.addWidget(self.content, 1)  # This will expand to fill available space
+        
+        # Video section container
+        self.video_section_container = QWidget()
+        self.video_section_container.setVisible(True)  # Start with video section visible
+        self.content_layout.addWidget(self.video_section_container)
+        
+        # Add the container to the main widget layout
+        main_widget_layout.addWidget(self.content_container, 1)
+        
+        # Content layout for the main area (above video section)
+        content_layout = QVBoxLayout(self.content)
         content_layout.setContentsMargins(10, 10, 10, 10)
         content_layout.setSpacing(15)
-        
-        # Add to main widget layout
-        main_widget_layout.addWidget(content, 1)
         
         # ─── Top Bar: Song Selection, Add Song, Settings, Refresh ────────────
         top_bar = QHBoxLayout()
@@ -689,7 +728,7 @@ class MainWindow(QMainWindow):
                 border: 2px solid #80bdff;
             }
         """)
-        self.song_select.currentIndexChanged.connect(self.on_song)
+        self.song_select.currentIndexChanged.connect(lambda idx: self.on_song(idx))
         top_bar.addWidget(self.song_select)
 
         # Style for all buttons
@@ -730,9 +769,33 @@ class MainWindow(QMainWindow):
         refresh_btn.clicked.connect(self.refresh_ui)
         top_bar.addWidget(refresh_btn)
         
+        # Focus Mode button (toggle)
+        self.focus_btn = QPushButton("Focus Mode")
+        self.focus_btn.setCheckable(True)  # Make it checkable
+        self.focus_btn.setChecked(True)   # Start with focus mode on (video section visible)
+        self.focus_btn.setStyleSheet(button_style + """
+            QPushButton:!checked {
+                background-color: #d4edda;
+                border: 2px solid #28a745;
+                color: #155724;
+                font-weight: bold;
+                padding: 4px 10px;  /* Adjust padding to account for border */
+            }
+            QPushButton:!checked:hover {
+                background-color: #c3e6cb;
+                border: 2px solid #218838;
+            }
+            QPushButton:checked {
+                font-weight: normal;
+            }
+        """)
+        self.focus_btn.clicked.connect(self.toggle_focus_mode)
+        top_bar.addWidget(self.focus_btn)
+        
+
         # Start Presenter button
-        start_btn = QPushButton("\u25B6 Start Presenter")  
-        start_btn.setStyleSheet("""
+        self.start_btn = QPushButton("\u25B6 Start Presenting")  
+        self.start_btn.setStyleSheet("""
             QPushButton {
                 background-color: #28a745;
                 color: white;
@@ -750,9 +813,17 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #1e7e34;
             }
+            QPushButton:checked {
+                background-color: #dc3545;
+                border-color: #c82333;
+            }
+            QPushButton:checked:hover {
+                background-color: #c82333;
+            }
         """)
-        start_btn.clicked.connect(self.presenter.show)
-        top_bar.addWidget(start_btn)
+        self.start_btn.setCheckable(True)
+        self.start_btn.clicked.connect(self.toggle_presenter_mode)
+        top_bar.addWidget(self.start_btn)
 
         # ─── Lyrics List ─────────────────────────────────────────────────────
         # Create a container widget for the lyric list and buttons
@@ -761,38 +832,48 @@ class MainWindow(QMainWindow):
         song_list_layout.setContentsMargins(5, 5, 5, 5)
         song_list_layout.setSpacing(10)
         
+        # Create a container for the section filter buttons
+        self.section_widget = QWidget()
+        self.section_widget.setMaximumHeight(40)  # Limit height of the section bar
+        self.section_layout = QHBoxLayout(self.section_widget)
+        self.section_layout.setContentsMargins(2, 2, 2, 2)  # Reduced margins
+        self.section_layout.setSpacing(3)  # Reduced spacing between buttons
+        
+        # Add a stretch to push buttons to the left
+        self.section_layout.addStretch(1)
+        song_list_layout.addWidget(self.section_widget, 0)  # Don't stretch this widget
+        
         # Add the list widget
         self.lyric_list = QListWidget()
-        self.lyric_list.setObjectName("lyricList")  # Add object name for specific styling
+        self.lyric_list.setObjectName("lyricList")
+        self.lyric_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.lyric_list.customContextMenuRequested.connect(self.show_context_menu)
         self.lyric_list.setStyleSheet("""
             QListWidget#lyricList {
                 background-color: #ffffff;
                 border: 1px solid #dee2e6;
-                border-radius: 6px;
-                padding: 4px;
-                font-size: 14px;
-                outline: none;  /* Remove focus border */
+                border-radius: 4px;
+                padding: 1px;
+                font-size: 13px;
+                outline: none;
             }
             QListWidget#lyricList::item {
-                padding: 2px 4px;
-                margin: 1px 0;
+                padding: 1px 3px;
+                margin: 0;
                 border-radius: 2px;
-                border: 1px solid transparent;
+                border: none;
+                min-height: 20px;
             }
             QListWidget#lyricList::item:selected {
-                background-color: #e8f5e9;  /* Light green for current item */
+                background-color: #e8f5e9;
                 color: #2e7d32;
-                border: 1px solid #c8e6c9;
+                border: none;
             }
             QListWidget#lyricList::item:hover {
                 background-color: #e9ecef;
             }
-            QListWidget#lyricList:item:focus {
-                outline: none;
-                border: none;
-            }
         """)
-        song_list_layout.addWidget(self.lyric_list)
+        song_list_layout.addWidget(self.lyric_list, 1)  # Add stretch to make list expandable
         
         # Add the Add Lyrics button below the list
         add_lyrics_btn = QPushButton("Add Lyrics")
@@ -801,11 +882,13 @@ class MainWindow(QMainWindow):
                 background-color: #4a90e2;
                 color: white;
                 border: none;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-size: 13px;
+                border-radius: 2px;
+                padding: 3px 6px;
+                margin: 2px;
+                font-size: 12px;
                 font-weight: 500;
                 width: 100%;
+                max-height: 24px;
             }
             QPushButton:hover {
                 background-color: #3a7bc8;
@@ -819,11 +902,19 @@ class MainWindow(QMainWindow):
         song_list_layout.addWidget(add_lyrics_btn)
         
         # Add the container to the main layout
-        content_layout.addWidget(song_list_container)
+        content_layout.addWidget(song_list_container, 1)  # Add stretch to make it expandable
+
+        # Create lyric list with layout for section filters
+        self.lyric_list_container = QWidget()
+        self.lyric_list_layout = QVBoxLayout(self.lyric_list_container)
+        self.lyric_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.lyric_list_layout.setSpacing(0)
+        
+        # The lyric list is already created above, no need to create it again
 
         # ─── Video Controls & List ────────────────────────────────────────────
-        video_section = QVBoxLayout()
-        content_layout.addLayout(video_section)
+        video_section = QVBoxLayout(self.video_section_container)
+        video_section.setContentsMargins(10, 0, 10, 10)
 
         # ─── Video URL / Add Video / Rename Video Bar ────────────────────────
         video_input_bar = QHBoxLayout()
@@ -903,6 +994,10 @@ class MainWindow(QMainWindow):
         rename_video_btn.clicked.connect(self.rename_video)
         video_input_bar.addWidget(rename_video_btn)
 
+        # Download progress bar
+        self.progress = QProgressBar()
+        video_section.addWidget(self.progress)
+
         # Video list in single column with thumbnails
         self.video_list = QListWidget()
         self.video_list.setViewMode(QListWidget.ListMode)
@@ -938,10 +1033,6 @@ class MainWindow(QMainWindow):
         video_section.addWidget(self.video_list)
         self.video_list.itemClicked.connect(lambda it: self.on_video(self.video_list.row(it)))
 
-        # Download progress bar
-        self.progress = QProgressBar()
-        video_section.addWidget(self.progress)
-
         # Set window size and center on screen
         self.resize(1000, 700)
         self.center()
@@ -953,6 +1044,9 @@ class MainWindow(QMainWindow):
         if self.splash:
             self.splash.set_status("Loading videos...")
         self.refresh_ui()
+        
+        # Connect presenter visibility change to update UI
+        self.presenter.visibilityChanged.connect(self.on_presenter_visibility_changed)
         
         # Close splash screen after a short delay and show main window
         if self.splash:
@@ -1050,6 +1144,44 @@ class MainWindow(QMainWindow):
         """Handle the window close event to ensure proper cleanup."""
         self.cleanup()
         event.accept()
+        
+    def toggle_focus_mode(self):
+        """Toggle between focus mode and normal mode."""
+        # The checked state of the button determines visibility
+        self.video_section_container.setVisible(self.focus_btn.isChecked())
+    def toggle_presenter_mode(self, checked):
+        """Toggle between presenter mode and normal mode."""
+        if checked:
+            self.presenter.show()
+            self.start_btn.setText("■ Stop Presenting")
+        else:
+            self.presenter.hide()
+            self.start_btn.setText("▶ Start Presenting")
+            
+    def on_presenter_visibility_changed(self, visible):
+        """Handle changes in presenter window visibility."""
+        if hasattr(self, 'start_btn'):
+            self.start_btn.setChecked(visible)
+            self.start_btn.setText("■ Stop Presenting" if visible else "▶ Start Presenting")
+            
+            # Adjust window size based on presenter mode
+            if visible:
+                # Store current size before expanding
+                if not hasattr(self, 'normal_size'):
+                    self.normal_size = self.size()
+                # Expand the window to take more vertical space
+                screen = QApplication.primaryScreen().availableGeometry()
+                new_height = int(screen.height() * 0.7)  # 70% of screen height
+                self.resize(self.width(), new_height)
+                self.center()
+            elif hasattr(self, 'normal_size'):
+                # Restore to normal size
+                self.resize(self.normal_size)
+                self.center()
+                
+            # Force update the layout
+            self.content.updateGeometry()
+            self.update()
 
         # If no videos yet, auto-download defaults
         if self.video_list.count() == 0 and DEFAULT_VIDEO_URLS:
@@ -1186,53 +1318,179 @@ class MainWindow(QMainWindow):
             if self.video_list.item(i).data(Qt.UserRole) == new_path:
                 self.video_list.setCurrentRow(i)
                 break
-        else:
-            # If not found, try to restore the previous selection
-            if 0 <= current_row < self.video_list.count():
-                self.video_list.setCurrentRow(current_row)
-
-        # 6. If that video was playing, update the presenter
-        try:
-            self.presenter.set_video(new_path)
-        except Exception:
-            pass
-
-    def on_song(self, idx):
-        self.lyric_list.clear()
-        song = self.songs[idx]
+            # Count only actual lyrics (skip section headers)
+            if 'text' in slide:
+                actual_idx += 1
+            lyric_idx += 1
+            btn.setCheckable(True)
+            btn.setChecked(section == section_filter)
+            btn.clicked.connect(lambda checked, s=section: self.on_song(idx, s))
+            btn.setStyleSheet("""
+                QPushButton {
+                    padding: 2px 8px;
+                    font-size: 11px;
+                    border-radius: 3px;
+                    border: 1px solid #dee2e6;
+                    background: #f8f9fa;
+                }
+                QPushButton:checked {
+                    background: #4a90e2;
+                    color: white;
+                }
+                QPushButton:hover {
+                    background: #e9ecef;
+                }
+            """)
+            self.section_layout.insertWidget(i, btn)
+        
+        # Add lyrics to the list
+        current_section = None
         for i, slide in enumerate(song['lyrics']):
-            # Create a local copy of i for the lambda
-            slide_text = slide['text']
-            # Create a wrapper function that updates both presenter and UI
-            def play_lyric(checked, text=slide_text, item_idx=i):
-                # Update the presenter
-                self.presenter.set_lyric(text)
-                # Clear previous selection
-                for j in range(self.lyric_list.count()):
-                    self.lyric_list.item(j).setSelected(False)
-                # Set new selection
-                current_item = self.lyric_list.item(item_idx)
-                if current_item:
-                    current_item.setSelected(True)
-                    self.lyric_list.scrollToItem(current_item)
-                    
-            wd = SlideWidget(
-                slide_text,
-                play_lyric,  # Use the wrapper function
-                lambda checked, i=i: self.edit_slide(idx, i),
-                lambda checked, i=i: self.del_slide(idx, i),
-                icons_on_left=True
-            )
-            item = QListWidgetItem()
-            item.setSizeHint(wd.sizeHint())
-            item.setData(Qt.UserRole, slide_text)  # Store the slide text for double-click
+            # Skip if section filter is active and doesn't match
+            if section_filter is not None and slide.get('section') != section_filter:
+                continue
+                
+            # Check if section changed
+            if 'section' in slide and slide['section'] != current_section:
+                current_section = slide['section']
+                # Add section header
+                section_item = QListWidgetItem()
+                section_item.setFlags(Qt.NoItemFlags)
+                section_item.setSizeHint(QSize(0, 24))
+                
+                section_widget = QLabel(f"<b>{current_section or 'No Section'}</b>")
+                section_widget.setStyleSheet("""
+                    background-color: #f1f3f5;
+                    padding: 2px 8px;
+                    border-radius: 2px;
+                    margin: 1px 0;
+                    font-size: 12px;
+                """)
+                
+                self.lyric_list.addItem(section_item)
+                self.lyric_list.setItemWidget(section_item, section_widget)
+            
+            # Add the lyric item
+            item = QListWidgetItem(slide['text'])
+            item.setData(Qt.UserRole, slide)
             self.lyric_list.addItem(item)
-            self.lyric_list.setItemWidget(item, wd)
+            
+            # Apply alternating background for sections
+            if i % 2 == 0:
+                item.setBackground(QColor(250, 250, 250))
+            else:
+                item.setBackground(QColor(255, 255, 255))
+        
+        # Show the first video if available
+        if self.video_list.count() > 0 and not self.video_list.currentItem():
+            self.video_list.setCurrentRow(0)
+            self.on_video(0)
+            
+            # Connect the double click handler for the lyric item
+            def on_double_clicked(item):
+                data = item.data(Qt.UserRole)
+                if isinstance(data, dict):
+                    self.presenter.set_lyric(data['text'])
+            
+            self.lyric_list.itemDoubleClicked.connect(on_double_clicked)
+        
+        # Connect double-click signal after adding all items
+        self.lyric_list.itemDoubleClicked.connect(self.on_lyric_double_clicked)
+        
+        # Update presenter with song title if not filtering by section
+        if section_filter is None:
+            self.presenter.set_lyric(song['title'])
+
+    def get_styled_input(self, title, label, text='', parent=None):
+        """Create a styled input dialog with consistent theming."""
+        dialog = QDialog(parent or self)
+        dialog.setWindowTitle(title)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #f8f9fa;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QLabel {
+                color: #343a40;
+                font-size: 14px;
+                padding: 5px 0;
+            }
+            QTextEdit, QLineEdit {
+                background-color: white;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+                min-width: 300px;
+                min-height: 100px;
+                selection-background-color: #80bdff;
+            }
+            QTextEdit:focus, QLineEdit:focus {
+                border: 2px solid #80bdff;
+                padding: 7px;  /* Adjust for border */
+            }
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 13px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #3a7bc8;
+            }
+            QPushButton:pressed {
+                background-color: #2c6cb3;
+            }
+            QPushButton#cancelButton {
+                background-color: #6c757d;
+            }
+            QPushButton#cancelButton:hover {
+                background-color: #5a6268;
+            }
+        """)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Add label
+        label_widget = QLabel(label)
+        layout.addWidget(label_widget)
+        
+        # Add text edit (multi-line for lyrics, single-line for song titles)
+        if 'lyric' in title.lower():
+            text_edit = QTextEdit()
+            text_edit.setPlainText(text)
+            text_edit.setAcceptRichText(False)
+        else:
+            text_edit = QLineEdit(text)
+        
+        layout.addWidget(text_edit)
+        
+        # Add button box
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+
+        # Show the first video if available
+        if self.video_list.count() > 0 and not self.video_list.currentItem():
+            self.video_list.setCurrentRow(0)
+            self.on_video(0)
+                
+            # Connect the double click handler for the lyric item
+            def on_double_clicked(item):
+                data = item.data(Qt.UserRole)
+                if isinstance(data, dict):
+                    self.presenter.set_lyric(data['text'])
+            
+            self.lyric_list.itemDoubleClicked.connect(on_double_clicked)
             
         # Connect double-click signal after adding all items
         self.lyric_list.itemDoubleClicked.connect(self.on_lyric_double_clicked)
             
-        self.presenter.set_lyric(song['title'])
+        # Update presenter with song title if not filtering by section
+        if section_filter is None:
+            self.presenter.set_lyric(song['title'])
 
     def get_styled_input(self, title, label, text='', parent=None):
         """Create a styled input dialog with consistent theming."""
@@ -1320,30 +1578,491 @@ class MainWindow(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             if isinstance(text_edit, QTextEdit):
                 return text_edit.toPlainText().strip(), True
-            else:
-                return text_edit.text().strip(), True
-        return '', False
 
-    def new_slide(self, song_idx):
-        text, ok = self.get_styled_input('New Lyric', 'Enter the lyric text:')
-        if ok and text:
-            self.songs[song_idx]['lyrics'].append({'text': text})
-            self.save_song(song_idx)
-            self.on_song(song_idx)
-
+    def new_slide(self, song_idx, section=''):
+        if song_idx == -1:
+            return ''
+            
+        # Get current section filter
+        section_filter = None
+        for i in range(self.section_layout.count()):
+            widget = self.section_layout.itemAt(i).widget()
+            if widget and widget.isChecked() and widget.text() != "All":
+                section_filter = widget.text()
+                if section_filter == "No Section":
+                    section_filter = ""
+                break
+        
+        # Get all unique sections for the current song
+        sections = set()
+        for slide in self.songs[song_idx]['lyrics']:
+            if 'section' in slide and slide['section']:
+                sections.add(slide['section'])
+        
+        # Create dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Add New Lyric')
+        dialog.setMinimumWidth(600)
+        dialog.setMinimumHeight(400)
+        
+        # Set up layout with margins and spacing
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 15, 20, 15)
+        layout.setSpacing(15)
+        
+        # Section selection
+        section_layout = QVBoxLayout()
+        section_layout.setSpacing(5)
+        
+        # Section label and combo box in a horizontal layout
+        section_row = QHBoxLayout()
+        section_label = QLabel('Section:')
+        section_label.setFixedWidth(80)
+        
+        # Combo box for existing sections with autocompletion
+        section_combo = QComboBox()
+        section_combo.setEditable(True)
+        section_combo.setInsertPolicy(QComboBox.InsertAtTop)
+        section_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
+        # Add existing sections to combo box
+        section_combo.addItem("", "")  # Empty section
+        section_combo.addItem("No Section", "")
+        for s in sorted(sections):
+            section_combo.addItem(s, s)
+        
+        # Set current section in combo box if provided
+        if section:
+            section_combo.setCurrentText(section)
+        
+        # Add to section row
+        section_row.addWidget(section_label)
+        section_row.addWidget(section_combo, 1)  # Make combo box expandable
+        
+        # Add section row to section layout
+        section_layout.addLayout(section_row)
+        
+        # Add section layout to main layout
+        layout.addLayout(section_layout)
+        
+        # Lyric input
+        lyric_label = QLabel('Lyric Text:')
+        lyric_input = QTextEdit()
+        lyric_input.setAcceptRichText(False)
+        lyric_input.setStyleSheet("""
+            QTextEdit {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 13px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 8px;
+            }
+            QTextEdit:focus {
+                border: 2px solid #80bdff;
+                padding: 7px;
+            }
+        """)
+        
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        
+        # Style the dialog
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #f8f9fa;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QLabel {
+                color: #343a40;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QComboBox {
+                padding: 6px 8px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                min-height: 32px;
+                background: white;
+            }
+            QComboBox:hover {
+                border-color: #80bdff;
+            }
+            QComboBox:focus, QComboBox:on {
+                border: 2px solid #80bdff;
+                padding: 5px 7px;
+            }
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 13px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #3a7bc8;
+            }
+            QPushButton:pressed {
+                background-color: #2c6cb3;
+            }
+            QPushButton#cancelButton {
+                background-color: #6c757d;
+            }
+            QPushButton#cancelButton:hover {
+                background-color: #5a6268;
+            }
+        """)
+        
+        # Add widgets to layout with proper spacing
+        layout.addWidget(lyric_label)
+        layout.addWidget(lyric_input, 1)  # Make the text edit expandable
+        layout.addSpacing(10)
+        layout.addWidget(button_box)
+        
+        # Set focus to the lyric input
+        lyric_input.setFocus()
+        
+        # Show dialog
+        if dialog.exec_() == QDialog.Accepted:
+            section = section_combo.currentText().strip()
+            text = lyric_input.toPlainText().strip()
+            if text:
+                self.songs[song_idx]['lyrics'].append({
+                    'text': text,
+                    'section': section if section else None
+                })
+                self.save_song(song_idx)
+                
+                # Refresh with current filter
+                self.on_song(song_idx, section_filter)
+                
+                # Find and select the new item
+                for i in range(self.lyric_list.count()):
+                    item = self.lyric_list.item(i)
+                    if item.flags() & Qt.ItemIsSelectable and item.data(Qt.UserRole)['text'] == text:
+                        self.lyric_list.setCurrentItem(item)
+                        self.lyric_list.scrollToItem(item)
+                        break
+                
+                # Return the section for the next lyric
+                return section if section else ''
+        
+        # If cancelled or no text, return the original section
+        return section
+        
     def edit_slide(self, song_idx, idx):
-        current = self.songs[song_idx]['lyrics'][idx]['text']
-        text, ok = self.get_styled_input('Edit Lyric', 'Edit the lyric text:', current)
-        if ok and text:
-            self.songs[song_idx]['lyrics'][idx]['text'] = text
-            self.save_song(song_idx)
-            self.on_song(song_idx)
+        if song_idx == -1 or idx < 0 or idx >= len(self.songs[song_idx]['lyrics']):
+            return
+            
+        # Get current section filter
+        section_filter = None
+        for i in range(self.section_layout.count()):
+            widget = self.section_layout.itemAt(i).widget()
+            if widget and widget.isChecked() and widget.text() != "All":
+                section_filter = widget.text()
+                if section_filter == "No Section":
+                    section_filter = ""
+                break
+                
+        # Get the actual lyric index (accounting for section headers)
+        actual_idx = 0
+        lyric_idx = 0
+        for i, slide in enumerate(self.songs[song_idx]['lyrics']):
+            if actual_idx == idx and 'text' in slide:
+                lyric_idx = i
+                break
+            if 'text' in slide:
+                actual_idx += 1
+        else:
+            return  # Lyric not found
+            
+        current = self.songs[song_idx]['lyrics'][lyric_idx]
+        
+        # Get all unique sections for the current song
+        sections = set()
+        for slide in self.songs[song_idx]['lyrics']:
+            if 'section' in slide and slide['section']:
+                sections.add(slide['section'])
+        
+        # Create dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Edit Lyric')
+        dialog.setMinimumWidth(600)
+        dialog.setMinimumHeight(400)
+        
+        # Set up layout with margins and spacing
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 15, 20, 15)
+        layout.setSpacing(15)
+        
+        # Section selection
+        section_layout = QVBoxLayout()
+        section_layout.setSpacing(5)
+        
+        # Section label and combo box in a horizontal layout
+        section_row = QHBoxLayout()
+        section_label = QLabel('Section:')
+        section_label.setFixedWidth(80)
+        
+        # Combo box for existing sections with autocompletion
+        section_combo = QComboBox()
+        section_combo.setEditable(True)
+        section_combo.setInsertPolicy(QComboBox.InsertAtTop)
+        section_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
+        # Add existing sections to combo box
+        section_combo.addItem("", "")  # Empty section
+        section_combo.addItem("No Section", "")
+        for section in sorted(sections):
+            section_combo.addItem(section, section)
+        
+        # Set current section in combo box
+        current_section = current.get('section', '')
+        if current_section in sections:
+            section_combo.setCurrentText(current_section)
+        else:
+            section_combo.setCurrentIndex(0)
+            if current_section:
+                section_combo.setItemText(0, current_section)
+        
+        # Add to section row
+        section_row.addWidget(section_label)
+        section_row.addWidget(section_combo, 1)  # Make combo box expandable
+        
+        # Add section row to section layout
+        section_layout.addLayout(section_row)
+        
+        # Add section layout to main layout
+        layout.addLayout(section_layout)
+        
+        # Lyric input
+        lyric_label = QLabel('Lyric Text:')
+        lyric_input = QTextEdit()
+        lyric_input.setPlainText(current['text'])
+        lyric_input.setAcceptRichText(False)
+        lyric_input.setStyleSheet("""
+            QTextEdit {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 13px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 8px;
+            }
+            QTextEdit:focus {
+                border: 2px solid #80bdff;
+                padding: 7px;
+            }
+        """)
+        
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        
+        # Style the dialog
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #f8f9fa;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QLabel {
+                color: #343a40;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QComboBox {
+                padding: 6px 8px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                min-height: 32px;
+                background: white;
+            }
+            QComboBox:hover {
+                border-color: #80bdff;
+            }
+            QComboBox:focus, QComboBox:on {
+                border: 2px solid #80bdff;
+                padding: 5px 7px;
+            }
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 13px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #3a7bc8;
+            }
+            QPushButton:pressed {
+                background-color: #2c6cb3;
+            }
+            QPushButton#cancelButton {
+                background-color: #6c757d;
+            }
+            QPushButton#cancelButton:hover {
+                background-color: #5a6268;
+            }
+        """)
+        
+        # Add widgets to layout with proper spacing
+        layout.addWidget(lyric_label)
+        layout.addWidget(lyric_input, 1)  # Make the text edit expandable
+        layout.addSpacing(10)
+        layout.addWidget(button_box)
+        
+        # Set focus to the lyric input
+        lyric_input.setFocus()
+        
+        # Show dialog
+        if dialog.exec_() == QDialog.Accepted:
+            new_text = lyric_input.toPlainText().strip()
+            new_section = section_combo.currentText().strip()
+            
+            if new_text:  # Only update if there's text
+                self.songs[song_idx]['lyrics'][lyric_idx] = {
+                    'text': new_text,
+                    'section': new_section if new_section else None
+                }
+                self.save_song(song_idx)
+                
+                # Refresh with current filter
+                self.on_song(song_idx, section_filter)
+                
+                # Find and select the edited item
+                for i in range(self.lyric_list.count()):
+                    item = self.lyric_list.item(i)
+                    if item.flags() & Qt.ItemIsSelectable and item.data(Qt.UserRole)['text'] == new_text:
+                        self.lyric_list.setCurrentItem(item)
+                        self.lyric_list.scrollToItem(item)
+                        break
 
-    def del_slide(self, song_idx, idx):
-        del self.songs[song_idx]['lyrics'][idx]
-        self.save_song(song_idx)
-        self.on_song(song_idx)
-
+    def on_song(self, idx, section_filter=None):
+        """Handle song selection and display lyrics with section filtering."""
+        if idx == -1:
+            self.lyric_list.clear()
+            return
+            
+        self.lyric_list.clear()
+        song = self.songs[idx]
+        
+        # Get all sections for this song
+        sections = set()
+        for slide in song['lyrics']:
+            if 'section' in slide and slide['section']:
+                sections.add(slide['section'])
+        
+        # Clear existing section buttons
+        for i in reversed(range(self.section_layout.count())): 
+            widget = self.section_layout.itemAt(i).widget()
+            if widget is not None: 
+                widget.deleteLater()
+        
+        # Add "All" button
+        all_btn = QPushButton("All")
+        all_btn.setCheckable(True)
+        all_btn.setChecked(section_filter is None)
+        all_btn.clicked.connect(lambda: self.on_song(idx, None))
+        all_btn.setStyleSheet("""
+            QPushButton {
+                padding: 2px 8px;
+                font-size: 11px;
+                border-radius: 3px;
+                border: 1px solid #dee2e6;
+                background: #f8f9fa;
+            }
+            QPushButton:checked {
+                background: #4a90e2;
+                color: white;
+            }
+            QPushButton:hover {
+                background: #e9ecef;
+            }
+        """)
+        self.section_layout.insertWidget(0, all_btn)
+        
+        # Add section buttons
+        for i, section in enumerate(sorted(sections), 1):
+            btn = QPushButton(section or "No Section")
+            btn.setCheckable(True)
+            btn.setChecked(section == section_filter)
+            btn.clicked.connect(lambda checked, s=section: self.on_song(idx, s))
+            btn.setStyleSheet("""
+                QPushButton {
+                    padding: 2px 8px;
+                    font-size: 11px;
+                    border-radius: 3px;
+                    border: 1px solid #dee2e6;
+                    background: #f8f9fa;
+                }
+                QPushButton:checked {
+                    background: #4a90e2;
+                    color: white;
+                }
+                QPushButton:hover {
+                    background: #e9ecef;
+                }
+            """)
+            self.section_layout.insertWidget(i, btn)
+        
+        # Add stretch to push buttons to the left
+        self.section_layout.addStretch(1)
+        
+        # Add lyrics to the list
+        current_section = None
+        for i, slide in enumerate(song['lyrics']):
+            # Skip if section filter is active and doesn't match
+            if section_filter is not None and slide.get('section') != section_filter:
+                continue
+                
+            # Check if section changed
+            if 'section' in slide and slide['section'] != current_section:
+                current_section = slide['section']
+                # Add section header
+                section_item = QListWidgetItem()
+                section_item.setFlags(Qt.NoItemFlags)
+                section_item.setSizeHint(QSize(0, 24))
+                
+                section_widget = QLabel(f"<b>{current_section or 'No Section'}</b>")
+                section_widget.setStyleSheet("""
+                    background-color: #f1f3f5;
+                    padding: 2px 8px;
+                    border-radius: 2px;
+                    margin: 1px 0;
+                    font-size: 12px;
+                """)
+                
+                self.lyric_list.addItem(section_item)
+                self.lyric_list.setItemWidget(section_item, section_widget)
+            
+            # Add the lyric item
+            item = QListWidgetItem(slide['text'])
+            item.setData(Qt.UserRole, slide)
+            self.lyric_list.addItem(item)
+            
+            # Apply alternating background for sections
+            if i % 2 == 0:
+                item.setBackground(QColor(250, 250, 250))
+            else:
+                item.setBackground(QColor(255, 255, 255))
+        
+        # Connect the double click handler for the lyric item
+        def on_double_clicked(item):
+            data = item.data(Qt.UserRole)
+            if isinstance(data, dict):
+                self.presenter.set_lyric(data['text'])
+        
+        self.lyric_list.itemDoubleClicked.connect(on_double_clicked)
+        
+        # Update presenter with song title if not filtering by section
+        if section_filter is None:
+            self.presenter.set_lyric(song['title'])
+    
     def save_song(self, idx):
         title = self.songs[idx]['title']
         path = os.path.join(LYRICS_DIR, f"{title}.json")
@@ -1663,16 +2382,52 @@ class MainWindow(QMainWindow):
         if url:
             self.download_video(url)
 
+    def show_context_menu(self, position):
+        """Show context menu for lyric items."""
+        item = self.lyric_list.itemAt(position)
+        if not item:
+            return
+            
+        # Only show context menu for selectable items (lyrics, not section headers)
+        if not (item.flags() & Qt.ItemIsSelectable):
+            return
+            
+        menu = QMenu()
+        
+        # Add actions
+        edit_action = menu.addAction("Edit")
+        delete_action = menu.addAction("Delete")
+        
+        # Get the current song index
+        song_idx = self.song_select.currentIndex()
+        if song_idx == -1:
+            return
+            
+        # Get the actual lyric index in the song's lyrics list
+        # Need to account for section headers in the list
+        lyric_idx = -1
+        for i in range(self.lyric_list.row(item) + 1):
+            current_item = self.lyric_list.item(i)
+            if current_item.flags() & Qt.ItemIsSelectable:
+                lyric_idx += 1
+        
+        # Connect actions with the correct indices
+        edit_action.triggered.connect(lambda checked, s=song_idx, l=lyric_idx: self.edit_slide(s, l))
+        delete_action.triggered.connect(lambda checked, s=song_idx, l=lyric_idx: self.del_slide(s, l))
+        
+        # Show the menu at the cursor position
+        menu.exec_(self.lyric_list.viewport().mapToGlobal(position))
+
     def on_lyric_double_clicked(self, item):
         """Handle double-click on a lyric item to display it in the presenter."""
-        text = item.data(Qt.UserRole)
-        if text:
-            # Clear previous current item
-            for i in range(self.lyric_list.count()):
-                self.lyric_list.item(i).setSelected(False)
-            # Set new current item
+        data = item.data(Qt.UserRole)
+        if isinstance(data, dict) and 'text' in data:
+            # Clear previous selection
+            for j in range(self.lyric_list.count()):
+                self.lyric_list.item(j).setSelected(False)
+            # Set new selection
             item.setSelected(True)
-            self.presenter.set_lyric(text)
+            self.presenter.set_lyric(data['text'])
 
     def on_video(self, idx):
         path = self.video_list.item(idx).data(Qt.UserRole)
@@ -1804,6 +2559,10 @@ if __name__ == '__main__':
     
     # Show main window and close loading dialog
     loading.update_status("Ready", 100)
+    w.show()
+    loading.close()
+    
+    sys.exit(app.exec_())
     w.show()
     loading.close()
     
