@@ -102,8 +102,7 @@ class DownloadThread(QThread):
             self.finished.emit(final_path)
 
         except Exception as e:
-            tb = traceback.format_exc()
-            self.error.emit(f"{e}\n{tb}")
+            self.error.emit(f"{e}")
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None, settings=None):
