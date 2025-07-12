@@ -696,7 +696,7 @@ class MainWindow(QMainWindow):
         
         # Create main layout
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(10)
         
         # Create main widget with styling
@@ -715,7 +715,7 @@ class MainWindow(QMainWindow):
         
         # Create and set layout for main widget
         main_widget_layout = QVBoxLayout(self.main_widget)
-        main_widget_layout.setContentsMargins(10, 10, 10, 10)
+        main_widget_layout.setContentsMargins(5, 5, 5, 5)
         main_widget_layout.setSpacing(10)
         
         # Create a container for the main content and video section
@@ -738,8 +738,8 @@ class MainWindow(QMainWindow):
         
         # Content layout for the main area (above video section)
         content_layout = QVBoxLayout(self.content)
-        content_layout.setContentsMargins(10, 10, 10, 10)
-        content_layout.setSpacing(15)
+        content_layout.setContentsMargins(5, 5, 5, 5)
+        content_layout.setSpacing(10)
         
         # ─── Top Bar: Song Selection, Add Song, Settings, Refresh ────────────
         top_bar = QHBoxLayout()
@@ -930,14 +930,14 @@ class MainWindow(QMainWindow):
         song_list_layout.addWidget(self.lyric_list, 1)  # Add stretch to make list expandable
         
         # Add the Add Lyrics button below the list
-        add_lyrics_btn = QPushButton("Add Lyrics")
+        add_lyrics_btn = QPushButton("Add New Line")
         add_lyrics_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4a90e2;
                 color: white;
                 border: none;
                 border-radius: 2px;
-                padding: 3px 6px;
+                padding: 6px 12px;
                 margin: 2px;
                 font-size: 12px;
                 font-weight: 500;
@@ -1880,7 +1880,7 @@ class MainWindow(QMainWindow):
         
         # Create dialog
         dialog = QDialog(self)
-        dialog.setWindowTitle('Edit Lyric')
+        dialog.setWindowTitle('Edit Line')
         dialog.setMinimumWidth(600)
         dialog.setMinimumHeight(400)
         
