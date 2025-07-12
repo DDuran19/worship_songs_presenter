@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import sys, os, json, cv2, time
-from nanoid import generate
 from pytube import YouTube
 import yt_dlp
 
@@ -1349,7 +1348,7 @@ class MainWindow(QMainWindow):
         if self.video_list.count() == 0 and DEFAULT_VIDEO_URLS:
             # Create a simple progress dialog
             progress = QDialog(self)
-            progress.setWindowTitle("Downloading Videos")
+            progress.setWindowTitle("Downloading Default Videos")
             progress.setFixedSize(400, 120)
             
             layout = QVBoxLayout(progress)
@@ -2680,46 +2679,50 @@ class MainWindow(QMainWindow):
 
         # 2) Try yt_dlp (Python API)
         try:
-            def ydl_hook(d):
-                if d['status'] == 'downloading':
-                    if 'total_bytes' in d:
-                        self.progress.setValue(int(d['downloaded_bytes'] / d['total_bytes'] * 100))
-                elif d['status'] == 'finished':
-                    self.progress.setValue(100)
-                    
+            # 2a) Probe for metadata
+            probe_opts = {'quiet': True}
+            with yt_dlp.YoutubeDL(probe_opts) as probe:
+                info = probe.extract_info(url, download=False)
+
+            # 2b) Build sanitized title & output template
+            safe_title  = self.sanitize_filename(info.get('title', 'video'))
+            output_tmpl = os.path.join(VIDEOS_DIR, f"{safe_title}.%(ext)s")
+
+            # 2c) yt_dlp options: only video, MP4, no merging
             ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                'outtmpl': os.path.join(VIDEOS_DIR, '%(title)s.%(ext)s'),
-                'progress_hooks': [ydl_hook],
-                'noplaylist': True,
-                'writesubtitles': False,
-                'writeautomaticsub': False,
-                'ignoreerrors': True,
-                'no_warnings': True,
-                'quiet': True,
-                'postprocessors': [{
-                    'key': 'FFmpegVideoConvertor',
-                    'preferedformat': 'mp4',
-                }],
+                'format':        'bestvideo[ext=mp4][vcodec!=none]/bestvideo',
+                'outtmpl':       output_tmpl,
+                'noplaylist':    True,
+                'ignoreerrors':  True,
+                'no_warnings':   True,
+                'quiet':         False,
             }
-            
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if info:
-                    # Sanitize the filename
-                    safe_title = self.sanitize_filename(info.get('title', 'video'))
-                    output_path = os.path.join(VIDEOS_DIR, f"{safe_title}.mp4")
-                    ydl.params['outtmpl'] = output_path
-                    ydl.download([url])
-                    self.refresh_ui()
-                    return
+                ydl.download([url])
+
+            print(f"Downloaded via yt_dlp: {safe_title}.mp4")
+            self.progress.setValue(100)
+            self.refresh_ui()
+            return
+
         except Exception as e:
             print(f"yt_dlp (Python) failed: {e}")
+
+        finally:
+            # 3) Clean up any stray temp files and refresh
+            for fname in os.listdir(VIDEOS_DIR):
+                if fname.endswith(('.download', '.part')):
+                    try:
+                        os.remove(os.path.join(VIDEOS_DIR, fname))
+                    except:
+                        pass
+            self.refresh_ui()
+
 
         # 3) Fall back to yt-dlp CLI if available
         try:
             import subprocess
-            import tempfile
             
             # First get video info to get the title
             info_cmd = [
@@ -2873,142 +2876,18 @@ class MainWindow(QMainWindow):
         path = self.video_list.item(idx).data(Qt.UserRole)
         self.presenter.set_video(path)
 
-class LoadingDialog(QDialog):
-    def __init__(self, parent=None, title="Worship Presenter"):
-        flags = Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
-        super().__init__(parent, flags)
-
-        # ─── Window setup ────────────────────────────────────────────────
-        self.setWindowTitle(title)
-        self.setFixedSize(420, 180)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-
-        # ─── Drop shadow for the QDialog frame ───────────────────────────
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(20)
-        shadow.setOffset(0, 4)
-        shadow.setColor(Qt.black)
-        self.setGraphicsEffect(shadow)
-
-        # ─── Stylesheet ──────────────────────────────────────────────────
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #34495e;
-                border-radius: 10px;
-            }
-            QLabel#title {
-                color: #ecf0f1;
-                font-size: 22px;
-                font-weight: bold;
-            }
-            QLabel#status {
-                color: #bdc3c7;
-                font-size: 14px;
-            }
-            QProgressBar {
-                background-color: #2c3e50;
-                border: 1px solid #455a64;
-                border-radius: 5px;
-                height: 16px;
-                margin-top: 10px;
-            }
-            QProgressBar::chunk {
-                background-color: #1abc9c;
-                border-radius: 5px;
-            }
-        """)
-
-        # ─── Layout & Widgets ────────────────────────────────────────────
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(10)
-
-        # Optional spinner (uncomment if you have spinner.png)
-        # pix = QPixmap("spinner.png").scaled(48,48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        # icon = QLabel(self); icon.setPixmap(pix); icon.setAlignment(Qt.AlignCenter)
-        # layout.addWidget(icon)
-
-        # Title label
-        self.title_label = QLabel(title, self)
-        self.title_label.setObjectName("title")
-        self.title_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.title_label)
-
-        # Status label
-        self.status_label = QLabel("Initializing…", self)
-        self.status_label.setObjectName("status")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.status_label)
-
-        # Progress bar
-        self.progress = QProgressBar(self)
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress.setTextVisible(True)
-        layout.addWidget(self.progress)
-
-        # ─── Center on primary screen ────────────────────────────────────
-        screen = QApplication.primaryScreen().availableGeometry()
-        x = (screen.width() - self.width()) // 2
-        y = (screen.height() - self.height()) // 2
-        self.move(x, y)
-
-        # ─── Fade-in animation ───────────────────────────────────────────
-        self._fade = QPropertyAnimation(self, b"windowOpacity", self)
-        self._fade.setDuration(500)
-        self._fade.setStartValue(0.0)
-        self._fade.setEndValue(1.0)
-        self._fade.setEasingCurve(QEasingCurve.InOutCubic)
-
-    def showEvent(self, ev):
-        """Play fade-in when the dialog is shown."""
-        super().showEvent(ev)
-        self._fade.start()
-
-    def update_status(self, message: str, progress: int = None):
-        """
-        Update the status text and optionally the progress bar.
-        Call this from long-running tasks to keep the UI responsive.
-        """
-        self.status_label.setText(message)
-        if progress is not None:
-            self.progress.setValue(progress)
-        QApplication.processEvents()
-
-    def set_title(self, title: str):
-        """Change the dialog title on the fly."""
-        self.title_label.setText(title)
-        self.setWindowTitle(title)
-
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     
-    # Create and show loading dialog
-    loading = LoadingDialog()
-    loading.show()
-    
     # Initial setup
-    loading.update_status("Setting up directories...", 10)
     os.makedirs(LYRICS_DIR, exist_ok=True)
     os.makedirs(VIDEOS_DIR, exist_ok=True)
     
     # Load main window
-    loading.update_status("Loading interface...", 30)
     w = MainWindow()
     w.resize(1000, 600)
     
     # Show main window and close loading dialog
-    loading.update_status("Ready", 100)
     w.show()
-    loading.close()
-    
-    sys.exit(app.exec_())
-    w.show()
-    loading.close()
-    
-    sys.exit(app.exec_())
-    sys.exit(app.exec_())
-    w.show()
-    loading.close()
     
     sys.exit(app.exec_())
