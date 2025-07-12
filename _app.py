@@ -40,7 +40,8 @@ DEFAULTS = {
     "font_color": "white",
     "margins": [50, 0, 50, 0],
     "italic": False,
-    "fade_duration": 0.5
+    "fade_duration": 0.5,
+    "show_next_line": False
 }
 
 def load_defaults():
@@ -223,6 +224,10 @@ class SettingsDialog(QDialog):
         self.italic_cb = QCheckBox()
         self.italic_cb.setChecked(self.settings['italic'])
         
+        # Show Next Line Checkbox
+        self.show_next_line_cb = QCheckBox("")
+        self.show_next_line_cb.setChecked(self.settings['show_next_line'])
+        
         # Fade duration
         self.fade_duration = QDoubleSpinBox()
         self.fade_duration.setRange(0.1, 5.0)
@@ -249,6 +254,7 @@ class SettingsDialog(QDialog):
         form_layout.addRow("Font size:", self.font_size_spin)
         form_layout.addRow("Font color:", color_layout)
         form_layout.addRow("Italic text:", self.italic_cb)
+        form_layout.addRow("Show Next Line:", self.show_next_line_cb)
         
         # Add animation section
         anim_header = QLabel("<b>Animation</b>")
@@ -350,6 +356,7 @@ class SettingsDialog(QDialog):
             "margins": [self.margin_left.value(), 0, self.margin_right.value(), 0],
             "italic": self.italic_cb.isChecked(),
             "fade_duration": self.fade_duration.value(),
+            "show_next_line": self.show_next_line_cb.isChecked()
         }
 
 class PresenterWindow(QWidget):
@@ -406,7 +413,18 @@ class PresenterWindow(QWidget):
         
         self.overlay = QLabel("", self.main_widget)
         self.overlay.setAlignment(Qt.AlignCenter)
+        
+        # Next line overlay
+        self.next_line_overlay = QLabel("Next line here", self.main_widget)
+        self.next_line_overlay.setAlignment(Qt.AlignCenter)
+        self.next_line_overlay.setWordWrap(True)
+        self.next_line_overlay.setVisible(self.defaults.get('show_next_line', False))  # Set initial visibility
+        
+        # Flag to enable/disable next line overlay
+        self.show_next_line = self.defaults.get('show_next_line', False)
+        
         self.overlay.raise_()  # Make sure overlay is on top
+        self.next_line_overlay.raise_()
         
         self.apply_style()
         
@@ -451,14 +469,55 @@ class PresenterWindow(QWidget):
             
     def mouseReleaseEvent(self, event):
         self.drag_start_position = None
+        
+    def update_settings(self, settings):
+        """Update the presenter window settings"""
+        self.defaults.update(settings)
+        self.show_next_line = settings.get('show_next_line', False)
+        self.next_line_overlay.setVisible(self.show_next_line)
+        self.apply_style()
+        
     def apply_style(self):
         d = self.defaults
+        
+        # Main overlay style
         style = f"color:{d['font_color']};font-size:{d['font_size']}pt;background:transparent;"
         if d['italic']:
             style += "font-style:italic;"
         self.overlay.setStyleSheet(style)
         self.overlay.setWordWrap(True)
         self.overlay.setContentsMargins(d['margins'][0], 0, d['margins'][2], 0)
+        
+        # Next line overlay style (50% smaller font, 50% opacity)
+        next_line_font_size = max(12, int(d['font_size'] * 0.5))  # Ensure minimum 12pt
+        next_line_style = f"""
+            color: {d['font_color']};
+            font-size: {next_line_font_size}pt;
+            background: transparent;
+            opacity: 0.5;
+        """
+        if d['italic']:
+            next_line_style += "font-style:italic;"
+        self.next_line_overlay.setStyleSheet(next_line_style)
+        self.next_line_overlay.setContentsMargins(d['margins'][0], 0, d['margins'][2], 20)  # Add bottom margin
+        
+    def set_next_line(self, text):
+        """Update the next line overlay text and make it visible if show_next_line is True"""
+        self.next_line_overlay.setText(text)
+        self.next_line_overlay.setVisible(self.show_next_line)
+        
+    def set_next_lyric(self, text=''):
+        """Set the text for the next lyric line.
+        
+        Args:
+            text (str): The text of the next lyric line, or empty string to hide
+        """
+        if not hasattr(self, 'next_line_overlay'):
+            return
+        self.next_line_overlay.setText(text)
+        # Only show if there's text and show_next_line is True
+        self.next_line_overlay.setVisible(bool(text) and self.show_next_line)
+    
     def _next_frame(self):
         try:
             if not hasattr(self, 'cap') or self.cap is None:
@@ -468,7 +527,7 @@ class PresenterWindow(QWidget):
             if not ret:
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 return
-                
+            
             if frame is not None and frame.size > 0:
                 h, w, _ = frame.shape
                 if h > 0 and w > 0:
@@ -482,14 +541,23 @@ class PresenterWindow(QWidget):
                         ))
         except Exception as e:
             print(f"Error updating video frame: {e}")
+            
     def set_video(self, path):
         if self.cap:
             self.timer.stop()
             self.cap.release()
-        self.cap = cv2.VideoCapture(path)
-        fps = self.cap.get(cv2.CAP_PROP_FPS) or 25
-        self.timer.start(int(1000/fps))
-    def set_lyric(self, text):
+        if path and os.path.exists(path):
+            self.cap = cv2.VideoCapture(path)
+            fps = self.cap.get(cv2.CAP_PROP_FPS) or 25
+            self.timer.start(int(1000/fps))
+
+    def set_lyric(self, text, next_lyric=''):
+        # If no text, just clear and return
+        if not text:
+            self.overlay.clear()
+            self.set_next_lyric('')
+            return
+        
         # 1) Ensure we have one shared opacity effect
         if not hasattr(self, "_opacity_effect"):
             eff = QGraphicsOpacityEffect(self.overlay)
@@ -514,8 +582,9 @@ class PresenterWindow(QWidget):
 
         # 4) Once faded out, swap text and fade in
         def on_fade_out_finished():
-            # set the new lyric
+            # set the new lyric and next lyric
             self.overlay.setText(text)
+            self.set_next_lyric(next_lyric)
 
             fade_in = QPropertyAnimation(eff, b"opacity", self)
             fade_in.setDuration(fade_duration)
@@ -532,11 +601,28 @@ class PresenterWindow(QWidget):
         # 5) start fade-out
         fade_out.start()
         self._current_anim = fade_out
+        
     def resizeEvent(self, ev):
         self.main_widget.resize(self.size())
         r = self.rect()
         self.video_label.setGeometry(r)
         self.overlay.setGeometry(r)
+        
+        # Position next line overlay at the bottom
+        if hasattr(self, 'next_line_overlay'):
+            # Calculate height based on font size (approximate)
+            font_size = max(12, int(self.defaults.get('font_size', 48) * 0.5))
+            line_height = int(font_size * 1.5)  # Approximate line height
+            
+            # Position at bottom with some padding
+            x1 = int(r.width() * 0.1)  # 10% from left
+            y1 = int(r.height() - line_height * 3)  # Position up from bottom
+            x2 = int(-r.width() * 0.1)  # 10% from right
+            y2 = int(-line_height * 0.5)  # Small bottom padding
+            next_line_rect = r.adjusted(x1, y1, x2, y2)
+            self.next_line_overlay.setGeometry(next_line_rect)
+            self.next_line_overlay.show() if self.show_next_line else self.next_line_overlay.hide()
+            
         super().resizeEvent(ev)
         
     def show_context_menu(self, pos):
@@ -1362,7 +1448,12 @@ class MainWindow(QMainWindow):
                 
                 # Update the presenter with new settings
                 self.presenter.defaults = new_settings
+                self.presenter.show_next_line = new_settings.get('show_next_line', False)
                 self.presenter.apply_style()
+                
+                # Update the next line visibility
+                if hasattr(self.presenter, 'next_line_overlay'):
+                    self.presenter.next_line_overlay.setVisible(self.presenter.show_next_line)
                 
                 return True
                 
@@ -1370,6 +1461,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to save settings: {str(e)}")
                 print(f"Error saving settings: {e}")
                 return False
+                
         return False
 
     def load_settings(self):
@@ -2226,20 +2318,22 @@ class MainWindow(QMainWindow):
         self.lyric_list.setDropIndicatorShown(True)
         self.lyric_list.setDefaultDropAction(Qt.MoveAction)
         
-        # Connect the double click handler for the lyric item
-        def on_double_clicked(item):
-            data = item.data(Qt.UserRole)
-            if isinstance(data, dict):
-                self.presenter.set_lyric(data['text'])
-        
-        self.lyric_list.itemDoubleClicked.connect(on_double_clicked)
-        
         # Connect the item moved signal
         self.lyric_list.model().rowsMoved.connect(self.on_lyrics_reordered)
         
-        # Update presenter with song title if not filtering by section
+        # Update presenter with song title and first lyric if not filtering by section
         if section_filter is None:
-            self.presenter.set_lyric(song['title'])
+            if song['lyrics'] and len(song['lyrics']) > 0:
+                # Get first lyric text
+                first_lyric = song['lyrics'][0].get('text', '')
+                # Get second lyric text if it exists
+                next_lyric = song['lyrics'][1].get('text', '') if len(song['lyrics']) > 1 else ''
+                self.presenter.set_lyric(first_lyric, next_lyric)
+            else:
+                self.presenter.set_lyric(song['title'])
+        
+        # Connect the double click handler for the lyric item
+        self.lyric_list.itemDoubleClicked.connect(self.on_lyric_double_clicked)
     
     def on_lyrics_reordered(self, parent, start, end, destination, row):
         """Handle when lyrics are reordered via drag and drop"""
@@ -2695,7 +2789,22 @@ class MainWindow(QMainWindow):
                 self.lyric_list.item(j).setSelected(False)
             # Set new selection
             item.setSelected(True)
-            self.presenter.set_lyric(data['text'])
+            
+            # Get current and next lyric text
+            current_text = data['text']
+            next_text = ''
+            
+            # Find the next selectable lyric item
+            current_row = self.lyric_list.row(item)
+            for row in range(current_row + 1, self.lyric_list.count()):
+                next_item = self.lyric_list.item(row)
+                if next_item.flags() & Qt.ItemIsSelectable:
+                    next_data = next_item.data(Qt.UserRole)
+                    if isinstance(next_data, dict) and 'text' in next_data:
+                        next_text = next_data['text']
+                    break
+                    
+            self.presenter.set_lyric(current_text, next_text)
 
     def on_video(self, idx):
         path = self.video_list.item(idx).data(Qt.UserRole)

@@ -8,5 +8,6 @@
     0
   ],
   "italic": false,
-  "fade_duration": 0.5
+  "fade_duration": 0.5,
+  "show_next_line": true
 }
