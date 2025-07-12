@@ -11,7 +11,8 @@ from PyQt5.QtWidgets import (
     QDialog, QFormLayout, QSpinBox, QDoubleSpinBox,
     QLineEdit, QColorDialog, QDialogButtonBox, QCheckBox,
     QInputDialog, QProgressBar, QMessageBox, QTextEdit, QSizePolicy,
-    QAbstractItemView, QGraphicsOpacityEffect
+    QAbstractItemView, QGraphicsOpacityEffect, QScrollArea,
+    QFrame
 )
 from PyQt5.QtCore import (Qt, QTimer, QPropertyAnimation, 
     pyqtSignal, pyqtSlot, QEasingCurve, QSize, QSequentialAnimationGroup)
@@ -59,7 +60,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setMinimumWidth(400)
+        self.setMinimumSize(500, 400)  # Increased minimum size
         
         # Apply styles
         self.setStyleSheet("""
@@ -67,10 +68,24 @@ class SettingsDialog(QDialog):
                 background-color: #f8f9fa;
                 font-family: 'Segoe UI', Arial, sans-serif;
             }
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+            QWidget#settingsContainer {
+                background: transparent;
+            }
+            /* Button Box Styling */
+            QDialogButtonBox {
+                spacing: 10px;
+                background: white;
+                padding: 10px;
+                border-top: 1px solid #e0e0e0;
+            }
             QLabel {
                 color: #343a40;
                 font-size: 13px;
-                padding: 4px 0;
+                padding: 6px 0;
             }
             QSpinBox, QDoubleSpinBox, QLineEdit {
                 background-color: white;
@@ -79,6 +94,7 @@ class SettingsDialog(QDialog):
                 padding: 6px 8px;
                 font-size: 13px;
                 min-height: 32px;
+                min-width: 100px;
             }
             QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
                 width: 24px;
@@ -162,16 +178,29 @@ class SettingsDialog(QDialog):
         
         # Main layout
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(0, 0, 0, 0)  # Remove margins from main layout
+        main_layout.setSpacing(0)
         
-        # Form layout for settings
+        # Create scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        
+       # Create container widget for scroll area
+        container = QWidget()
+        container.setObjectName("settingsContainer")
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(20, 20, 20, 20)
+        container_layout.setSpacing(15)
+        
+       # Form layout for settings
         form_layout = QFormLayout()
         form_layout.setLabelAlignment(Qt.AlignLeft)
         form_layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
         form_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        form_layout.setHorizontalSpacing(20)
-        form_layout.setVerticalSpacing(10)
+        form_layout.setHorizontalSpacing(25)
+        form_layout.setVerticalSpacing(12)
+        form_layout.setContentsMargins(5, 5, 5, 5)  # Add some padding inside the form
         
         # Font Size
         self.font_size_spin = QSpinBox()
@@ -234,33 +263,77 @@ class SettingsDialog(QDialog):
         form_layout.addRow("Left margin:", self.margin_left)
         form_layout.addRow("Right margin:", self.margin_right)
         
-        # Add form to main layout
-        main_layout.addLayout(form_layout)
+        # Add form to container layout
+        container_layout.addLayout(form_layout)
+        container_layout.addStretch()  # Push content to top
         
-        # Add stretch to push buttons to bottom
-        main_layout.addStretch(1)
+        # Set container as scroll area's widget
+        scroll_area.setWidget(container)
+        main_layout.addWidget(scroll_area, 1)  # Allow scroll area to expand
         
-        # Add button box
+        # Create a container widget for the button box
+        button_container = QWidget()
+        button_container.setStyleSheet("""
+            QWidget {
+                background: white;
+                border-top: 1px solid #e0e0e0;
+                padding: 15px 20px;
+            }
+        """)
+        
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setContentsMargins(20, 15, 20, 15)  # Add padding inside the container
+        button_layout.setSpacing(15)  # Space between buttons
+        
+        # Add stretch to push buttons to the right
+        button_layout.addStretch()
+        
+        # Create the button box and store it as an instance variable
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.setStyleSheet("""
+            QDialogButtonBox {
+                spacing: 10px;
+            }
+        """)
         
-        # Style the buttons
+        # Get buttons and configure them
         ok_button = self.button_box.button(QDialogButtonBox.Ok)
-        ok_button.setMinimumWidth(100)
         ok_button.setAutoDefault(False)  # Prevent sound on click
         ok_button.setDefault(False)      # Prevent sound on Enter key
-        ok_button.clicked.connect(self.accept)  # Connect directly to accept
+        ok_button.setStyleSheet("""
+            QPushButton {
+                background: #4a90e2;
+                color: white;
+                border: 1px solid #3a7bc8;
+                border-radius: 4px;
+                padding: 8px 16px;
+                min-width: 80px;
+            }
+        """)
         
         cancel_button = self.button_box.button(QDialogButtonBox.Cancel)
-        cancel_button.setMinimumWidth(100)
         cancel_button.setAutoDefault(False)  # Prevent sound on click
         cancel_button.setDefault(False)      # Prevent sound on Enter key
-        cancel_button.clicked.connect(self.reject)  # Connect directly to reject
+        cancel_button.setStyleSheet("""
+            QPushButton {
+                background: #f0f0f0;
+                color: #333;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 8px 16px;
+                min-width: 80px;
+            }
+        """)
         
-        # Connect the accepted signal to accept()
+        # Connect signals
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         
-        main_layout.addWidget(self.button_box, alignment=Qt.AlignRight)
+        # Add button box to layout
+        button_layout.addWidget(self.button_box)
+        
+        # Add button container to main layout
+        main_layout.addWidget(button_container, 0, Qt.AlignBottom)
     
     def choose_color(self):
         """Open color dialog to choose text color"""

@@ -2,11 +2,11 @@
   "font_size": 48,
   "font_color": "#ffffff",
   "margins": [
-    50,
+    55,
     0,
     50,
     0
   ],
   "italic": false,
-  "fade_duration": 0.5000000000000001
+  "fade_duration": 0.5
 }
