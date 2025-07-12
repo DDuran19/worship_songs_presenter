@@ -611,17 +611,19 @@ class PresenterWindow(QWidget):
 
     def set_lyric(self, text, next_lyric=''):
         # If no text, show song title and set next line to space
-        if not text:
+        if text is None or text.strip() == '':
             # Get the current song title if available
             song_title = ''
             if hasattr(self, 'current_song_title'):
                 song_title = self.current_song_title
             
             # Show song title in main overlay
-            self.overlay.setText(song_title)
+            if hasattr(self, 'overlay'):
+                self.overlay.setText(song_title)
             
             # Set next line to a single space (not empty string) to maintain layout
-            self.set_next_lyric(' ')
+            if hasattr(self, 'next_line_overlay'):
+                self.set_next_lyric(' ')
             return
         
         # 1) Ensure we have one shared opacity effect
@@ -2387,20 +2389,11 @@ class MainWindow(QMainWindow):
         # Connect the item moved signal
         self.lyric_list.model().rowsMoved.connect(self.on_lyrics_reordered)
         
-        # Update presenter with song title and first lyric if not filtering by section
+        # Update presenter with song title only by default
         if section_filter is None:
-            # Set current song title in presenter
+            # Set current song title in presenter and show only the title
             self.presenter.current_song_title = song['title']
-            
-            if song['lyrics'] and len(song['lyrics']) > 0:
-                # Get first lyric text
-                first_lyric = song['lyrics'][0].get('text', '')
-                # Get second lyric text if it exists
-                next_lyric = song['lyrics'][1].get('text', '') if len(song['lyrics']) > 1 else ' '
-                self.presenter.set_lyric(first_lyric, next_lyric)
-            else:
-                # If no lyrics, show song title with empty next line (single space)
-                self.presenter.set_lyric(song['title'], ' ')
+            self.presenter.set_lyric('', ' ')  # Empty main text, space in next line
         
         # Connect the double click handler for the lyric item
         self.lyric_list.itemDoubleClicked.connect(self.on_lyric_double_clicked)
