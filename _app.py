@@ -194,12 +194,11 @@ class SettingsDialog(QDialog):
         self.italic_cb = QCheckBox()
         self.italic_cb.setChecked(self.settings['italic'])
         
-        # Fade Duration
-        self.fade_spin = QDoubleSpinBox()
-        self.fade_spin.setRange(0.1, 5.0)
-        self.fade_spin.setSingleStep(0.1)
-        self.fade_spin.setValue(self.settings['fade_duration'])
-        self.fade_spin.setSuffix(' s')
+        # Fade duration
+        self.fade_duration = QDoubleSpinBox()
+        self.fade_duration.setRange(0.1, 5.0)
+        self.fade_duration.setSingleStep(0.1)
+        self.fade_duration.setValue(self.settings.get('fade_duration', 0.5))
         
         # Margins
         self.margin_left = QSpinBox()
@@ -226,7 +225,7 @@ class SettingsDialog(QDialog):
         anim_header = QLabel("<b>Animation</b>")
         anim_header.setStyleSheet("font-size: 14px; color: #2c3e50; margin-top: 10px;")
         form_layout.addRow(anim_header)
-        form_layout.addRow("Fade duration:", self.fade_spin)
+        form_layout.addRow("Lyric Fade Duration (seconds):", self.fade_duration)
         
         # Add layout section
         layout_header = QLabel("<b>Layout</b>")
@@ -264,6 +263,7 @@ class SettingsDialog(QDialog):
         main_layout.addWidget(self.button_box, alignment=Qt.AlignRight)
     
     def choose_color(self):
+        """Open color dialog to choose text color"""
         color = QColorDialog.getColor(QColor(self.color_edit.text()), self, "Select Text Color")
         if color.isValid():
             self.color_edit.setText(color.name())
@@ -276,7 +276,7 @@ class SettingsDialog(QDialog):
             "font_color": self.color_edit.text(),
             "margins": [self.margin_left.value(), 0, self.margin_right.value(), 0],
             "italic": self.italic_cb.isChecked(),
-            "fade_duration": self.fade_spin.value()
+            "fade_duration": self.fade_duration.value(),
         }
 
 class PresenterWindow(QWidget):
@@ -2757,6 +2757,11 @@ if __name__ == '__main__':
     w.show()
     loading.close()
     
+    sys.exit(app.exec_())
+    w.show()
+    loading.close()
+    
+    sys.exit(app.exec_())
     sys.exit(app.exec_())
     w.show()
     loading.close()
