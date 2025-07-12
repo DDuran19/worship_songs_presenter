@@ -507,16 +507,74 @@ class PresenterWindow(QWidget):
         self.next_line_overlay.setVisible(self.show_next_line)
         
     def set_next_lyric(self, text=''):
-        """Set the text for the next lyric line.
+        """Set the text for the next lyric line with fade animation.
         
         Args:
             text (str): The text of the next lyric line, or empty string to hide
         """
         if not hasattr(self, 'next_line_overlay'):
             return
-        self.next_line_overlay.setText(text)
-        # Only show if there's text and show_next_line is True
-        self.next_line_overlay.setVisible(bool(text) and self.show_next_line)
+            
+        # If no text or next line is disabled, just hide immediately
+        if not text or not self.show_next_line:
+            self.next_line_overlay.setVisible(False)
+            return
+            
+        # 1) Ensure we have one shared opacity effect
+        if not hasattr(self, '_next_line_opacity_effect'):
+            eff = QGraphicsOpacityEffect(self.next_line_overlay)
+            self.next_line_overlay.setGraphicsEffect(eff)
+            self._next_line_opacity_effect = eff
+        else:
+            eff = self._next_line_opacity_effect
+            
+        # 2) Stop any running animation
+        if hasattr(self, '_next_line_current_anim'):
+            self._next_line_current_anim.stop()
+            del self._next_line_current_anim
+            
+        fade_duration = int(self.defaults.get('fade_duration', 300))  # Default to 300ms if not set
+        
+        # 3) Fade-out current text if visible
+        if self.next_line_overlay.isVisible():
+            fade_out = QPropertyAnimation(eff, b"opacity", self)
+            fade_out.setDuration(fade_duration)
+            fade_out.setStartValue(eff.opacity())
+            fade_out.setEndValue(0.0)
+            fade_out.setEasingCurve(QEasingCurve.InOutQuad)
+            
+            # 4) Once faded out, update text and fade in
+            def on_fade_out_finished():
+                self.next_line_overlay.setText(text)
+                self.next_line_overlay.setVisible(True)
+                
+                fade_in = QPropertyAnimation(eff, b"opacity", self)
+                fade_in.setDuration(fade_duration)
+                fade_in.setStartValue(0.0)
+                fade_in.setEndValue(0.5)  # Keep next line at half opacity
+                fade_in.setEasingCurve(QEasingCurve.InOutQuad)
+                fade_in.start()
+                
+                # Keep reference to prevent garbage collection
+                self._next_line_current_anim = fade_in
+                
+            fade_out.finished.connect(on_fade_out_finished)
+            fade_out.start()
+            self._next_line_current_anim = fade_out
+        else:
+            # If not currently visible, just set text and fade in
+            self.next_line_overlay.setText(text)
+            self.next_line_overlay.setVisible(True)
+            eff.setOpacity(0.0)  # Start transparent
+            
+            fade_in = QPropertyAnimation(eff, b"opacity", self)
+            fade_in.setDuration(fade_duration)
+            fade_in.setStartValue(0.0)
+            fade_in.setEndValue(0.5)  # Keep next line at half opacity
+            fade_in.setEasingCurve(QEasingCurve.InOutQuad)
+            fade_in.start()
+            
+            self._next_line_current_anim = fade_in
     
     def _next_frame(self):
         try:
@@ -552,10 +610,18 @@ class PresenterWindow(QWidget):
             self.timer.start(int(1000/fps))
 
     def set_lyric(self, text, next_lyric=''):
-        # If no text, just clear and return
+        # If no text, show song title and set next line to space
         if not text:
-            self.overlay.clear()
-            self.set_next_lyric('')
+            # Get the current song title if available
+            song_title = ''
+            if hasattr(self, 'current_song_title'):
+                song_title = self.current_song_title
+            
+            # Show song title in main overlay
+            self.overlay.setText(song_title)
+            
+            # Set next line to a single space (not empty string) to maintain layout
+            self.set_next_lyric(' ')
             return
         
         # 1) Ensure we have one shared opacity effect
@@ -2323,14 +2389,18 @@ class MainWindow(QMainWindow):
         
         # Update presenter with song title and first lyric if not filtering by section
         if section_filter is None:
+            # Set current song title in presenter
+            self.presenter.current_song_title = song['title']
+            
             if song['lyrics'] and len(song['lyrics']) > 0:
                 # Get first lyric text
                 first_lyric = song['lyrics'][0].get('text', '')
                 # Get second lyric text if it exists
-                next_lyric = song['lyrics'][1].get('text', '') if len(song['lyrics']) > 1 else ''
+                next_lyric = song['lyrics'][1].get('text', '') if len(song['lyrics']) > 1 else ' '
                 self.presenter.set_lyric(first_lyric, next_lyric)
             else:
-                self.presenter.set_lyric(song['title'])
+                # If no lyrics, show song title with empty next line (single space)
+                self.presenter.set_lyric(song['title'], ' ')
         
         # Connect the double click handler for the lyric item
         self.lyric_list.itemDoubleClicked.connect(self.on_lyric_double_clicked)
