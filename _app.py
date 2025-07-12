@@ -6,7 +6,7 @@ import yt_dlp
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QMainWindow, QPushButton, QToolButton,
     QListWidget, QListWidgetItem, QHBoxLayout, QVBoxLayout,
-    QLabel, QComboBox, QMenu, QStyle,QGraphicsDropShadowEffect,
+    QLabel, QComboBox, QMenu, QStyle,
     QDialog, QFormLayout, QSpinBox, QDoubleSpinBox,
     QLineEdit, QColorDialog, QDialogButtonBox, QCheckBox,
     QInputDialog, QProgressBar, QMessageBox, QTextEdit, QSizePolicy,
@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QFrame
 )
 from PyQt5.QtCore import (Qt, QTimer, QPropertyAnimation, 
-    pyqtSignal, pyqtSlot, QEasingCurve, QSize, QSequentialAnimationGroup)
+    pyqtSignal, pyqtSlot, QEasingCurve, QSize, QThread)
 from PyQt5.QtGui import QColor, QImage, QPixmap, QIcon
 
 # === Config paths ===
@@ -54,6 +54,56 @@ def load_defaults():
     for k, v in DEFAULTS.items():
         data.setdefault(k, v)
     return data
+
+class DownloadThread(QThread):
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(str)       # emits final filename
+    error    = pyqtSignal(str)       # emits error message
+
+    def __init__(self, url, videos_dir, parent=None):
+        super().__init__(parent)
+        self.url = url
+        self.videos_dir = videos_dir
+
+    def run(self):
+        try:
+            # --- Probe metadata ---
+            probe_opts = {'quiet': True}
+            with yt_dlp.YoutubeDL(probe_opts) as probe:
+                info = probe.extract_info(self.url, download=False)
+
+            # Build output
+            safe      = info.get('title', vid_id)
+            safe      = "".join(c for c in safe if c.isalnum() or c in " _-").rstrip()
+            tmpl      = os.path.join(self.videos_dir, f"{safe}.%(ext)s")
+
+            # --- yt_dlp download ---
+            def hook(d):
+                if not isinstance(d, dict): return
+                if d.get('status') == 'downloading' and d.get('total_bytes'):
+                    pct = int(d['downloaded_bytes']/d['total_bytes']*100)
+                    self.progress.emit(pct)
+
+            ydl_opts = {
+                'format':        'bestvideo[ext=mp4][vcodec!=none]/bestvideo',
+                'outtmpl':       tmpl,
+                'noplaylist':    True,
+                'ignoreerrors':  True,
+                'no_warnings':   True,
+                'quiet':         False,
+                'progress_hooks':[hook],
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([self.url])
+
+            final_path = os.path.join(self.videos_dir, f"{safe}.mp4")
+            self.progress.emit(100)
+            self.finished.emit(final_path)
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.error.emit(f"{e}\n{tb}")
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None, settings=None):
@@ -1376,7 +1426,7 @@ class MainWindow(QMainWindow):
                 QApplication.processEvents()
                 
                 try:
-                    self.download_video(url)
+                    self.start_download(url)
                 except Exception as e:
                     error_msg = f"Failed to download {url}: {str(e)}"
                     QMessageBox.warning(self, "Download Error", error_msg)
@@ -1389,7 +1439,16 @@ class MainWindow(QMainWindow):
             self.video_list.setCurrentRow(0)
             self.on_video(0)
 
-
+    def start_download(self, url):
+        self.thread = DownloadThread(url, VIDEOS_DIR, parent=self)
+        self.thread.progress.connect(self.progress.setValue)
+        self.thread.finished.connect(lambda path: (
+            print("Done:", path),
+            self.refresh_ui()
+        ))
+        self.thread.error.connect(lambda msg: QMessageBox.critical(self, "Download Error", msg))
+        self.thread.start()
+    
     def mouse_press(self, event):
         if event.button() == Qt.LeftButton:
             self.drag_start_position = event.globalPos() - self.frameGeometry().topLeft()
@@ -2808,7 +2867,7 @@ class MainWindow(QMainWindow):
     def add_video(self):
         url = self.video_url.text().strip()
         if url:
-            self.download_video(url)
+            self.start_download(url)
 
     def show_context_menu(self, position):
         """Show context menu for lyric items."""
